@@ -1,0 +1,74 @@
+{
+  "@@locale": "en",
+  "appTitle": "N64 Launcher",
+  "libraryTitle": "Games",
+  "emptyLibraryTitle": "No games yet",
+  "emptyLibraryBody": "Add a ROM file (.z64, .n64, .v64, .zip) to start playing.",
+  "addGame": "Add game",
+  "play": "Play",
+  "loadState": "Load save",
+  "removeFromLibrary": "Remove from library",
+  "deleteFile": "Delete file",
+  "settings": "Settings",
+  "help": "Help",
+  "cancel": "Cancel",
+  "delete": "Delete",
+  "remove": "Remove",
+  "confirmRemoveTitle": "Remove game",
+  "confirmRemoveBody": "Remove \"{name}\" from the library? The ROM file is kept.",
+  "@confirmRemoveBody": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "confirmDeleteTitle": "Delete file",
+  "confirmDeleteBody": "Permanently delete the ROM file for \"{name}\"?",
+  "@confirmDeleteBody": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "sizeMegabytes": "{value} MB",
+  "@sizeMegabytes": {
+    "placeholders": { "value": { "type": "String" } }
+  },
+  "saveSlots": "Save slots",
+  "autoSlot": "Auto (last point)",
+  "slotNumber": "Slot {number}",
+  "@slotNumber": {
+    "placeholders": { "number": { "type": "int" } }
+  },
+  "emptySlot": "Empty",
+  "noSaveStates": "No save states for this game.",
+  "settingsLanguage": "Language",
+  "settingsLanguageSystem": "System default",
+  "settingsAppearance": "Appearance",
+  "settingsControls": "On-screen controls",
+  "settingsShowControls": "Show touch controls",
+  "settingsShowControlsSubtitle": "Hidden automatically when a physical controller is connected.",
+  "settingsControlsOpacity": "Controls opacity",
+  "settingsHaptics": "Haptic feedback",
+  "settingsVideo": "Video",
+  "settingsIntegerScaling": "Integer scaling",
+  "settingsAbout": "About",
+  "controllerConnected": "Controller connected",
+  "controllerDisconnected": "Controller disconnected",
+  "pause": "Pause",
+  "resume": "Resume",
+  "quitGame": "Quit game",
+  "quitGameConfirm": "Quit and return to the library?",
+  "saveState": "Save state",
+  "stateSaved": "State saved to slot {number}",
+  "@stateSaved": {
+    "placeholders": { "number": { "type": "int" } }
+  },
+  "stateLoaded": "State loaded from slot {number}",
+  "@stateLoaded": {
+    "placeholders": { "number": { "type": "int" } }
+  },
+  "loadingCore": "Loading emulator core...",
+  "coreMissingTitle": "Emulator core missing",
+  "coreMissingBody": "The N64 core is not installed. Download it from Settings to play.",
+  "helpControlsTitle": "Controls",
+  "helpControlsBody": "Use the on-screen buttons to play. Connect a Bluetooth or USB controller and the touch controls disappear automatically.",
+  "helpSavesTitle": "Saves",
+  "helpSavesBody": "In-game saves and save states are stored on the device. Use the save-slot menu to keep several points per game.",
+  "helpRomsTitle": "Games",
+  "helpRomsBody": "Add your own .z64, .n64, .v64 or .zip ROM files. This app does not include any games."
+}

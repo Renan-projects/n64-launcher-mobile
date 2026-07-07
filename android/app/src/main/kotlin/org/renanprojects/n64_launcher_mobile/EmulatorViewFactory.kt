@@ -24,6 +24,7 @@ class EmulatorPlatformView(
     override fun getView(): View = surface
 
     override fun dispose() {
+        surface.shutdown()
         bridge.detachSurface()
     }
 }

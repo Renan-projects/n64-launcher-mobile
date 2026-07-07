@@ -1,11 +1,11 @@
 #include <jni.h>
 #include <dlfcn.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <EGL/egl.h>
 #include <android/log.h>
 
 #define LOG_TAG "n64host"
@@ -19,29 +19,40 @@
 #define RETRO_DEVICE_ID_ANALOG_Y 1
 
 #define RETRO_ENVIRONMENT_GET_CAN_DUPE 3
-#define RETRO_ENVIRONMENT_SET_PIXEL_FORMAT 10
 #define RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY 9
+#define RETRO_ENVIRONMENT_SET_PIXEL_FORMAT 10
+#define RETRO_ENVIRONMENT_SET_HW_RENDER 14
+#define RETRO_ENVIRONMENT_GET_VARIABLE 15
+#define RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE 17
 #define RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY 31
+
+#define RETRO_HW_FRAME_BUFFER_VALID ((void *) -1)
+
+typedef void (*retro_proc_address_t)(void);
+typedef retro_proc_address_t (*retro_hw_get_proc_address_t)(const char *sym);
+typedef uintptr_t (*retro_hw_get_current_framebuffer_t)(void);
+typedef void (*retro_hw_context_reset_t)(void);
+
+struct retro_hw_render_callback {
+    unsigned context_type;
+    retro_hw_context_reset_t context_reset;
+    retro_hw_get_current_framebuffer_t get_current_framebuffer;
+    retro_hw_get_proc_address_t get_proc_address;
+    bool depth;
+    bool stencil;
+    bool bottom_left_origin;
+    unsigned version_major;
+    unsigned version_minor;
+    bool cache_context;
+    retro_hw_context_reset_t context_destroy;
+    bool debug_context;
+};
 
 struct retro_game_info {
     const char *path;
     const void *data;
     size_t size;
     const char *meta;
-};
-
-struct retro_system_av_info {
-    struct {
-        unsigned base_width;
-        unsigned base_height;
-        unsigned max_width;
-        unsigned max_height;
-        float aspect_ratio;
-    } geometry;
-    struct {
-        double fps;
-        double sample_rate;
-    } timing;
 };
 
 typedef bool (*retro_environment_t)(unsigned, void *);
@@ -68,18 +79,38 @@ struct core {
     size_t (*retro_serialize_size)(void);
     bool (*retro_serialize)(void *, size_t);
     bool (*retro_unserialize)(const void *, size_t);
-    void (*retro_get_system_av_info)(struct retro_system_av_info *);
 };
 
 static struct core g_core;
-static pthread_t g_thread;
-static volatile bool g_running = false;
+static struct retro_hw_render_callback g_hw;
+static bool g_have_hw = false;
+
+static char g_core_path[1024];
+static char g_rom_path[1024];
+static char g_system_dir[1024];
+static char g_save_dir[1024];
+
+static volatile bool g_want_load = false;
+static volatile bool g_loaded = false;
+static volatile bool g_gl_ready = false;
 static volatile bool g_paused = false;
+
 static volatile int g_buttons = 0;
 static volatile float g_stick_x = 0.0f;
 static volatile float g_stick_y = 0.0f;
-static char g_system_dir[1024];
-static char g_save_dir[1024];
+
+static char g_pending_save[1024];
+static char g_pending_load[1024];
+static volatile bool g_do_save = false;
+static volatile bool g_do_load = false;
+
+static retro_proc_address_t proc_address(const char *sym) {
+    return (retro_proc_address_t) eglGetProcAddress(sym);
+}
+
+static uintptr_t current_framebuffer(void) {
+    return 0;
+}
 
 static bool env_cb(unsigned cmd, void *data) {
     switch (cmd) {
@@ -93,6 +124,17 @@ static bool env_cb(unsigned cmd, void *data) {
             return true;
         case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
             *(const char **) data = g_save_dir;
+            return true;
+        case RETRO_ENVIRONMENT_SET_HW_RENDER: {
+            struct retro_hw_render_callback *hw = data;
+            hw->get_current_framebuffer = current_framebuffer;
+            hw->get_proc_address = proc_address;
+            g_hw = *hw;
+            g_have_hw = true;
+            return true;
+        }
+        case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+            *(bool *) data = false;
             return true;
         default:
             return false;
@@ -157,108 +199,63 @@ static bool load_core(const char *path) {
     g_core.retro_serialize_size = resolve(g_core.handle, "retro_serialize_size");
     g_core.retro_serialize = resolve(g_core.handle, "retro_serialize");
     g_core.retro_unserialize = resolve(g_core.handle, "retro_unserialize");
-    g_core.retro_get_system_av_info = resolve(g_core.handle, "retro_get_system_av_info");
     return g_core.retro_run && g_core.retro_load_game && g_core.retro_init;
 }
 
-static void *run_loop(void *arg) {
-    (void) arg;
-    while (g_running) {
-        if (!g_paused && g_core.retro_run) g_core.retro_run();
+static bool startup(void) {
+    if (!load_core(g_core_path)) return false;
+
+    g_core.retro_set_environment(env_cb);
+    g_core.retro_set_video_refresh(video_cb);
+    g_core.retro_set_audio_sample(audio_sample_cb);
+    g_core.retro_set_audio_sample_batch(audio_batch_cb);
+    g_core.retro_set_input_poll(input_poll_cb);
+    g_core.retro_set_input_state(input_state_cb);
+    g_core.retro_init();
+
+    struct retro_game_info info;
+    memset(&info, 0, sizeof(info));
+    info.path = g_rom_path;
+    if (!g_core.retro_load_game(&info)) {
+        LOGE("retro_load_game failed");
+        return false;
     }
-    return NULL;
+    if (g_have_hw && g_hw.context_reset) g_hw.context_reset();
+    return true;
 }
 
-JNIEXPORT jboolean JNICALL
-Java_org_renanprojects_n64_1launcher_1mobile_LibretroCore_nativeStart(
-        JNIEnv *env, jobject thiz, jstring corePath, jstring romPath) {
-    const char *core = (*env)->GetStringUTFChars(env, corePath, NULL);
-    const char *rom = (*env)->GetStringUTFChars(env, romPath, NULL);
-
-    bool ok = load_core(core);
-    if (ok) {
-        g_core.retro_set_environment(env_cb);
-        g_core.retro_set_video_refresh(video_cb);
-        g_core.retro_set_audio_sample(audio_sample_cb);
-        g_core.retro_set_audio_sample_batch(audio_batch_cb);
-        g_core.retro_set_input_poll(input_poll_cb);
-        g_core.retro_set_input_state(input_state_cb);
-        g_core.retro_init();
-
-        struct retro_game_info info;
-        memset(&info, 0, sizeof(info));
-        info.path = rom;
-        ok = g_core.retro_load_game(&info);
-        if (ok) {
-            g_running = true;
-            g_paused = false;
-            pthread_create(&g_thread, NULL, run_loop, NULL);
-        }
-    }
-
-    (*env)->ReleaseStringUTFChars(env, corePath, core);
-    (*env)->ReleaseStringUTFChars(env, romPath, rom);
-    return ok ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT void JNICALL
-Java_org_renanprojects_n64_1launcher_1mobile_LibretroCore_nativeStop(JNIEnv *env, jobject thiz) {
-    if (!g_running) return;
-    g_running = false;
-    pthread_join(g_thread, NULL);
-    if (g_core.retro_unload_game) g_core.retro_unload_game();
+static void teardown(void) {
+    if (!g_core.handle) return;
+    if (g_have_hw && g_hw.context_destroy) g_hw.context_destroy();
+    if (g_loaded && g_core.retro_unload_game) g_core.retro_unload_game();
     if (g_core.retro_deinit) g_core.retro_deinit();
-    if (g_core.handle) dlclose(g_core.handle);
+    dlclose(g_core.handle);
     memset(&g_core, 0, sizeof(g_core));
+    g_have_hw = false;
+    g_loaded = false;
 }
 
-JNIEXPORT void JNICALL
-Java_org_renanprojects_n64_1launcher_1mobile_LibretroCore_nativePause(
-        JNIEnv *env, jobject thiz, jboolean paused) {
-    g_paused = paused == JNI_TRUE;
+static void write_file(const char *path, const void *data, size_t size) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fwrite(data, 1, size, f);
+    fclose(f);
 }
 
-JNIEXPORT void JNICALL
-Java_org_renanprojects_n64_1launcher_1mobile_LibretroCore_nativeReset(JNIEnv *env, jobject thiz) {
-    if (g_running && g_core.retro_reset) g_core.retro_reset();
-}
-
-JNIEXPORT void JNICALL
-Java_org_renanprojects_n64_1launcher_1mobile_LibretroCore_nativeSetInput(
-        JNIEnv *env, jobject thiz, jint buttons, jfloat stickX, jfloat stickY) {
-    g_buttons = buttons;
-    g_stick_x = stickX;
-    g_stick_y = stickY;
-}
-
-JNIEXPORT void JNICALL
-Java_org_renanprojects_n64_1launcher_1mobile_LibretroCore_nativeSaveState(
-        JNIEnv *env, jobject thiz, jstring path) {
-    if (!g_running || !g_core.retro_serialize_size) return;
+static void do_save(const char *path) {
+    if (!g_loaded || !g_core.retro_serialize_size) return;
     size_t size = g_core.retro_serialize_size();
     if (size == 0) return;
     void *buffer = malloc(size);
     if (!buffer) return;
-    if (g_core.retro_serialize(buffer, size)) {
-        const char *file = (*env)->GetStringUTFChars(env, path, NULL);
-        FILE *f = fopen(file, "wb");
-        if (f) {
-            fwrite(buffer, 1, size, f);
-            fclose(f);
-        }
-        (*env)->ReleaseStringUTFChars(env, path, file);
-    }
+    if (g_core.retro_serialize(buffer, size)) write_file(path, buffer, size);
     free(buffer);
 }
 
-JNIEXPORT jboolean JNICALL
-Java_org_renanprojects_n64_1launcher_1mobile_LibretroCore_nativeLoadState(
-        JNIEnv *env, jobject thiz, jstring path) {
-    if (!g_running || !g_core.retro_unserialize) return JNI_FALSE;
-    const char *file = (*env)->GetStringUTFChars(env, path, NULL);
-    FILE *f = fopen(file, "rb");
-    (*env)->ReleaseStringUTFChars(env, path, file);
-    if (!f) return JNI_FALSE;
+static bool do_load(const char *path) {
+    if (!g_loaded || !g_core.retro_unserialize) return false;
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -269,5 +266,105 @@ Java_org_renanprojects_n64_1launcher_1mobile_LibretroCore_nativeLoadState(
     }
     free(buffer);
     fclose(f);
-    return ok ? JNI_TRUE : JNI_FALSE;
+    return ok;
+}
+
+#define FN(name) Java_org_renanprojects_n64_1launcher_1mobile_NativeLib_##name
+
+JNIEXPORT void JNICALL
+FN(nativeSetPaths)(JNIEnv *env, jobject thiz, jstring corePath, jstring romPath,
+                   jstring systemDir, jstring saveDir) {
+    const char *core = (*env)->GetStringUTFChars(env, corePath, NULL);
+    const char *rom = (*env)->GetStringUTFChars(env, romPath, NULL);
+    const char *sys = (*env)->GetStringUTFChars(env, systemDir, NULL);
+    const char *save = (*env)->GetStringUTFChars(env, saveDir, NULL);
+    strncpy(g_core_path, core, sizeof(g_core_path) - 1);
+    strncpy(g_rom_path, rom, sizeof(g_rom_path) - 1);
+    strncpy(g_system_dir, sys, sizeof(g_system_dir) - 1);
+    strncpy(g_save_dir, save, sizeof(g_save_dir) - 1);
+    (*env)->ReleaseStringUTFChars(env, corePath, core);
+    (*env)->ReleaseStringUTFChars(env, romPath, rom);
+    (*env)->ReleaseStringUTFChars(env, systemDir, sys);
+    (*env)->ReleaseStringUTFChars(env, saveDir, save);
+    g_want_load = true;
+    g_paused = false;
+}
+
+JNIEXPORT void JNICALL
+FN(nativeOnSurfaceCreated)(JNIEnv *env, jobject thiz) {
+    g_gl_ready = true;
+}
+
+JNIEXPORT void JNICALL
+FN(nativeOnSurfaceChanged)(JNIEnv *env, jobject thiz, jint width, jint height) {
+    (void) width;
+    (void) height;
+}
+
+JNIEXPORT void JNICALL
+FN(nativeRunFrame)(JNIEnv *env, jobject thiz) {
+    if (g_want_load && g_gl_ready && !g_loaded) {
+        g_loaded = startup();
+        g_want_load = false;
+        if (!g_loaded) teardown();
+        return;
+    }
+    if (!g_loaded || g_paused) return;
+
+    if (g_do_load) {
+        do_load(g_pending_load);
+        g_do_load = false;
+    }
+    if (g_do_save) {
+        do_save(g_pending_save);
+        g_do_save = false;
+    }
+
+    g_core.retro_run();
+}
+
+JNIEXPORT void JNICALL
+FN(nativeOnSurfaceDestroyed)(JNIEnv *env, jobject thiz) {
+    g_gl_ready = false;
+    teardown();
+}
+
+JNIEXPORT void JNICALL
+FN(nativeStop)(JNIEnv *env, jobject thiz) {
+    g_want_load = false;
+    g_paused = true;
+}
+
+JNIEXPORT void JNICALL
+FN(nativePause)(JNIEnv *env, jobject thiz, jboolean paused) {
+    g_paused = paused == JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
+FN(nativeReset)(JNIEnv *env, jobject thiz) {
+    if (g_loaded && g_core.retro_reset) g_core.retro_reset();
+}
+
+JNIEXPORT void JNICALL
+FN(nativeSetInput)(JNIEnv *env, jobject thiz, jint buttons, jfloat stickX, jfloat stickY) {
+    g_buttons = buttons;
+    g_stick_x = stickX;
+    g_stick_y = stickY;
+}
+
+JNIEXPORT void JNICALL
+FN(nativeSaveState)(JNIEnv *env, jobject thiz, jstring path) {
+    const char *file = (*env)->GetStringUTFChars(env, path, NULL);
+    strncpy(g_pending_save, file, sizeof(g_pending_save) - 1);
+    (*env)->ReleaseStringUTFChars(env, path, file);
+    g_do_save = true;
+}
+
+JNIEXPORT jboolean JNICALL
+FN(nativeLoadState)(JNIEnv *env, jobject thiz, jstring path) {
+    const char *file = (*env)->GetStringUTFChars(env, path, NULL);
+    strncpy(g_pending_load, file, sizeof(g_pending_load) - 1);
+    (*env)->ReleaseStringUTFChars(env, path, file);
+    g_do_load = true;
+    return JNI_TRUE;
 }

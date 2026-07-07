@@ -4,5 +4,6 @@ project(n64host)
 add_library(n64host SHARED n64host.c)
 
 find_library(log-lib log)
+find_library(egl-lib EGL)
 
-target_link_libraries(n64host ${log-lib})
+target_link_libraries(n64host ${log-lib} ${egl-lib})

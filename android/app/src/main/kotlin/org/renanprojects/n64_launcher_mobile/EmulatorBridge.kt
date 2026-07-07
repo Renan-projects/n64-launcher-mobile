@@ -1,64 +1,72 @@
 package org.renanprojects.n64_launcher_mobile
 
 import android.content.Context
+import android.os.Build
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHandler {
 
-    private val core = LibretroCore()
     private var surface: EmulatorSurfaceView? = null
     private var currentRom: String? = null
 
+    init {
+        installBundledCore()
+    }
+
     fun attachSurface(view: EmulatorSurfaceView) {
         surface = view
-        core.attachSurface(view)
     }
 
     fun detachSurface() {
-        core.detachSurface()
         surface = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "isCoreAvailable" -> result.success(core.isAvailable(context))
+            "isCoreAvailable" -> result.success(coreFile() != null)
             "controllerCount" -> result.success(0)
             "start" -> start(call.argument<String>("rom"), result)
             "stop" -> {
-                core.stop()
+                if (NativeLib.available) NativeLib.nativeStop()
                 currentRom = null
                 result.success(null)
             }
             "pause" -> {
-                core.pause()
+                if (NativeLib.available) NativeLib.nativePause(true)
                 result.success(null)
             }
             "resume" -> {
-                core.resume()
+                if (NativeLib.available) NativeLib.nativePause(false)
                 result.success(null)
             }
             "reset" -> {
-                core.reset()
+                if (NativeLib.available) NativeLib.nativeReset()
                 result.success(null)
             }
             "input" -> {
-                core.setInput(
-                    call.argument<Int>("buttons") ?: 0,
-                    (call.argument<Double>("stickX") ?: 0.0).toFloat(),
-                    (call.argument<Double>("stickY") ?: 0.0).toFloat(),
-                )
+                if (NativeLib.available) {
+                    NativeLib.nativeSetInput(
+                        call.argument<Int>("buttons") ?: 0,
+                        (call.argument<Double>("stickX") ?: 0.0).toFloat(),
+                        (call.argument<Double>("stickY") ?: 0.0).toFloat(),
+                    )
+                }
                 result.success(null)
             }
             "saveState" -> {
                 val slot = call.argument<Int>("slot") ?: 0
-                core.saveState(slotFile(currentRom, slot))
+                slotFile(currentRom, slot)?.let {
+                    if (NativeLib.available) NativeLib.nativeSaveState(it.absolutePath)
+                }
                 result.success(null)
             }
             "loadState" -> {
                 val slot = call.argument<Int>("slot") ?: 0
-                val ok = core.loadState(slotFile(currentRom, slot))
+                val file = slotFile(currentRom, slot)
+                val ok = file != null && file.exists() && NativeLib.available &&
+                    NativeLib.nativeLoadState(file.absolutePath)
                 result.success(if (ok) "running" else "error")
             }
             "saveSlots" -> result.success(listSlots(call.argument<String>("rom")))
@@ -73,23 +81,63 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
     }
 
     private fun start(rom: String?, result: MethodChannel.Result) {
+        val core = coreFile()
         if (rom == null) {
             result.success("error")
             return
         }
-        if (!core.isAvailable(context)) {
+        if (core == null || !NativeLib.available) {
             result.success("missingCore")
             return
         }
         currentRom = rom
-        val started = core.start(context, rom)
-        result.success(if (started) "running" else "error")
+        NativeLib.nativeSetPaths(
+            core.absolutePath,
+            rom,
+            systemDir().absolutePath,
+            saveDir().absolutePath,
+        )
+        result.success("running")
     }
 
-    private fun statesDir(): File {
-        val dir = File(context.filesDir, "states")
+    private fun coresDir(): File = dir("cores")
+
+    private fun statesDir(): File = dir("states")
+
+    private fun systemDir(): File = dir("system")
+
+    private fun saveDir(): File = dir("saves")
+
+    private fun dir(name: String): File {
+        val dir = File(context.filesDir, name)
         if (!dir.exists()) dir.mkdirs()
         return dir
+    }
+
+    private fun coreFile(): File? =
+        coresDir().listFiles { f -> f.extension == "so" }?.firstOrNull()
+
+    private fun installBundledCore(): Unit {
+        if (coreFile() != null) return
+        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: return
+        val assetPath = "cores/$abi"
+        val assets = context.assets
+        val names = try {
+            assets.list(assetPath) ?: return
+        } catch (_: Exception) {
+            return
+        }
+        for (name in names) {
+            if (!name.endsWith(".so")) continue
+            val target = File(coresDir(), name)
+            try {
+                assets.open("$assetPath/$name").use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+            } catch (_: Exception) {
+                target.delete()
+            }
+        }
     }
 
     private fun slotFile(rom: String?, slot: Int): File? {
@@ -117,7 +165,7 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
     }
 
     fun release() {
-        core.stop()
+        if (NativeLib.available) NativeLib.nativeStop()
         detachSurface()
     }
 }

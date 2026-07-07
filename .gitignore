@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Bundled libretro cores (fetched with scripts/fetch_cores.sh)
+android/app/src/main/assets/cores/

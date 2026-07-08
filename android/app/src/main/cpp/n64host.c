@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <EGL/egl.h>
 #include <android/log.h>
 
@@ -24,7 +25,18 @@
 #define RETRO_ENVIRONMENT_SET_HW_RENDER 14
 #define RETRO_ENVIRONMENT_GET_VARIABLE 15
 #define RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE 17
+#define RETRO_ENVIRONMENT_GET_LOG_INTERFACE 27
 #define RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY 31
+
+struct retro_log_callback { void (*log)(int level, const char *fmt, ...); };
+
+static void core_log(int level, const char *fmt, ...) {
+    (void) level;
+    va_list ap;
+    va_start(ap, fmt);
+    __android_log_vprint(ANDROID_LOG_INFO, "n64core", fmt, ap);
+    va_end(ap);
+}
 
 #define RETRO_HW_FRAME_BUFFER_VALID ((void *) -1)
 
@@ -107,12 +119,15 @@ static volatile bool g_do_load = false;
 static void *g_gles_lib = NULL;
 
 static retro_proc_address_t proc_address(const char *sym) {
-    if (!g_gles_lib) {
-        g_gles_lib = dlopen("libGLESv3.so", RTLD_NOW | RTLD_GLOBAL);
-        if (!g_gles_lib) g_gles_lib = dlopen("libGLESv2.so", RTLD_NOW | RTLD_GLOBAL);
+    void *p = (void *) eglGetProcAddress(sym);
+    if (!p) {
+        if (!g_gles_lib) {
+            g_gles_lib = dlopen("libGLESv3.so", RTLD_NOW | RTLD_GLOBAL);
+            if (!g_gles_lib) g_gles_lib = dlopen("libGLESv2.so", RTLD_NOW | RTLD_GLOBAL);
+        }
+        if (g_gles_lib) p = dlsym(g_gles_lib, sym);
     }
-    void *p = g_gles_lib ? dlsym(g_gles_lib, sym) : NULL;
-    if (!p) p = (void *) eglGetProcAddress(sym);
+    if (!p) LOGE("proc_address NULL for %s", sym);
     return (retro_proc_address_t) p;
 }
 
@@ -143,6 +158,9 @@ static bool env_cb(unsigned cmd, void *data) {
         }
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
             *(bool *) data = false;
+            return true;
+        case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+            ((struct retro_log_callback *) data)->log = core_log;
             return true;
         default:
             return false;

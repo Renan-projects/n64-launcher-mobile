@@ -108,6 +108,9 @@ static const char *core_var(const char *key) {
     if (!strcmp(key, "mupen64plus-angrylion-multithread")) return "all threads";
     if (!strcmp(key, "mupen64plus-angrylion-sync")) return "Low";
     if (!strcmp(key, "mupen64plus-angrylion-vioverlay")) return "Filtered";
+    if (!strcmp(key, "mupen64plus-astick-sensitivity")) return "100";
+    if (!strcmp(key, "mupen64plus-astick-deadzone")) return "15";
+    if (!strcmp(key, "mupen64plus-pak1")) return "memory";
     return NULL;
 }
 

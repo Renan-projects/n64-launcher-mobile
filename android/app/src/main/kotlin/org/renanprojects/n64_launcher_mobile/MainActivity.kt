@@ -1,5 +1,6 @@
 package org.renanprojects.n64_launcher_mobile
 
+import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -61,6 +62,11 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.source and InputDevice.SOURCE_GAMEPAD != 0 ||
+            event.source and InputDevice.SOURCE_JOYSTICK != 0 ||
+            event.source and InputDevice.SOURCE_DPAD != 0) {
+            Log.i("n64pad", "KEY src=0x${event.source.toString(16)} code=${event.keyCode} act=${event.action}")
+        }
         if (isGamepad(event.source)) {
             val mask = keyMask(event.keyCode)
             if (mask != 0) {
@@ -76,6 +82,10 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        Log.i("n64pad", "MOTION src=0x${event.source.toString(16)} act=${event.action} " +
+            "x=${event.getAxisValue(MotionEvent.AXIS_X)} y=${event.getAxisValue(MotionEvent.AXIS_Y)} " +
+            "z=${event.getAxisValue(MotionEvent.AXIS_Z)} rz=${event.getAxisValue(MotionEvent.AXIS_RZ)} " +
+            "hx=${event.getAxisValue(MotionEvent.AXIS_HAT_X)} hy=${event.getAxisValue(MotionEvent.AXIS_HAT_Y)}")
         if (isGamepad(event.source) && event.action == MotionEvent.ACTION_MOVE) {
             val dz = 0.18f
             var x = event.getAxisValue(MotionEvent.AXIS_X)

@@ -86,6 +86,9 @@ struct retro_variable { const char *key; const char *value; };
 
 static const char *core_var(const char *key) {
     if (!key) return NULL;
+    /* Without this the core falls back to the pure interpreter, which is many
+     * times slower than the ARM64 dynamic recompiler. */
+    if (!strcmp(key, "mupen64plus-cpucore")) return "dynamic_recompiler";
     if (!strcmp(key, "mupen64plus-rdp-plugin")) return "angrylion";
     if (!strcmp(key, "mupen64plus-rsp-plugin")) return "hle";
     if (!strcmp(key, "mupen64plus-ThreadedRenderer")) return "False";

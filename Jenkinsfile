@@ -5,6 +5,10 @@ pipeline {
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '20'))
   }
+  environment {
+    APP_VERSION = '1.0.0'
+    REPO = 'renan-projects/n64-launcher-mobile'
+  }
   stages {
     stage('Build') {
       parallel {
@@ -27,6 +31,7 @@ flutter pub get
 flutter build apk --release
 '''
             archiveArtifacts artifacts: 'build/app/outputs/flutter-apk/app-release.apk', fingerprint: true
+            stash name: 'android-apk', includes: 'build/app/outputs/flutter-apk/app-release.apk'
           }
         }
         stage('iOS') {
@@ -56,7 +61,32 @@ mkdir -p build/ipa-work/Payload
 cp -R build/ios/iphoneos/Runner.app build/ipa-work/Payload/
 ( cd build/ipa-work && zip -qr ../n64-launcher-mobile-unsigned.ipa Payload )
 '''
-            archiveArtifacts artifacts: 'build/n64-launcher-mobile-unsigned.ipa', allowEmptyArchive: false, fingerprint: true
+            archiveArtifacts artifacts: 'build/n64-launcher-mobile-unsigned.ipa', fingerprint: true
+            stash name: 'ios-ipa', includes: 'build/n64-launcher-mobile-unsigned.ipa'
+          }
+        }
+      }
+    }
+    stage('Release') {
+      when { branch 'main' }
+      agent { label 'android' }
+      steps {
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE', message: 'Release skipped (create the renan-projects-gh-token credential to enable it)') {
+          unstash 'android-apk'
+          unstash 'ios-ipa'
+          publishAndroidArtifact([
+            apkPath:      'build/app/outputs/flutter-apk/app-release.apk',
+            appName:      'N64 Launcher Mobile',
+            version:      env.APP_VERSION,
+            releaseNotes: "Automated build #${env.BUILD_NUMBER} — Android APK + iOS IPA (unsigned, install with SideStore).",
+            githubToken:  'renan-projects-gh-token'
+          ])
+          withCredentials([string(credentialsId: 'renan-projects-gh-token', variable: 'GITHUB_TOKEN')]) {
+            sh '''#!/usr/bin/env bash
+set -euo pipefail
+TAG="v${APP_VERSION}-build-${BUILD_NUMBER}"
+gh release upload "$TAG" build/n64-launcher-mobile-unsigned.ipa --repo "$REPO" --clobber
+'''
           }
         }
       }

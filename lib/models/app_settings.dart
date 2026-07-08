@@ -8,6 +8,7 @@ class AppSettings {
     this.controlsOpacity = 0.55,
     this.haptics = true,
     this.integerScaling = false,
+    this.controlLayout = const {},
   });
 
   final String? localeCode;
@@ -16,6 +17,10 @@ class AppSettings {
   final double controlsOpacity;
   final bool haptics;
   final bool integerScaling;
+
+  /// Per-element position/size overrides for the touch controls, keyed by
+  /// element id. Each value is [x, y, w, h], relative (0..1). Empty = defaults.
+  final Map<String, List<double>> controlLayout;
 
   Locale? get locale => localeCode == null ? null : Locale(localeCode!);
 
@@ -27,6 +32,7 @@ class AppSettings {
     double? controlsOpacity,
     bool? haptics,
     bool? integerScaling,
+    Map<String, List<double>>? controlLayout,
   }) =>
       AppSettings(
         localeCode: clearLocale ? null : (localeCode ?? this.localeCode),
@@ -35,6 +41,7 @@ class AppSettings {
         controlsOpacity: controlsOpacity ?? this.controlsOpacity,
         haptics: haptics ?? this.haptics,
         integerScaling: integerScaling ?? this.integerScaling,
+        controlLayout: controlLayout ?? this.controlLayout,
       );
 
   Map<String, dynamic> toJson() => {
@@ -44,6 +51,8 @@ class AppSettings {
         'controlsOpacity': controlsOpacity,
         'haptics': haptics,
         'integerScaling': integerScaling,
+        'controlLayout':
+            controlLayout.map((k, v) => MapEntry(k, v.toList())),
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
@@ -56,5 +65,12 @@ class AppSettings {
         controlsOpacity: (json['controlsOpacity'] as num?)?.toDouble() ?? 0.55,
         haptics: json['haptics'] as bool? ?? true,
         integerScaling: json['integerScaling'] as bool? ?? false,
+        controlLayout: (json['controlLayout'] as Map<String, dynamic>?)?.map(
+              (k, v) => MapEntry(
+                k,
+                (v as List).map((e) => (e as num).toDouble()).toList(),
+              ),
+            ) ??
+            const {},
       );
 }

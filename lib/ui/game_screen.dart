@@ -6,6 +6,7 @@ import '../services/controller_monitor.dart';
 import '../services/emulator_service.dart';
 import '../state/app_state.dart';
 import 'l10n_ext.dart';
+import 'layout_editor.dart';
 import 'widgets/emulator_view.dart';
 import 'widgets/touch_controls.dart';
 import 'widgets/save_slots_sheet.dart';
@@ -71,6 +72,21 @@ class _GameScreenState extends State<GameScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  Future<void> _openLayoutEditor() async {
+    await _emulator.pause();
+    setState(() => _menuOpen = false);
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const LayoutEditor()),
+    );
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await _emulator.resume();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openSaveSlots() async {
     final slot = await showSaveSlotsSheet(context, widget.rom);
     if (slot == null || !mounted) return;
@@ -111,7 +127,8 @@ class _GameScreenState extends State<GameScreen> {
             _CenterMessage(text: context.l10n.coreMissingBody),
           if (showControls)
             TouchControls(
-              layout: ControlLayout.landscape,
+              layout:
+                  ControlLayout.landscape.withOverrides(settings.controlLayout),
               opacity: settings.controlsOpacity,
               haptics: settings.haptics,
               onChanged: _emulator.sendInput,
@@ -163,6 +180,11 @@ class _GameScreenState extends State<GameScreen> {
                       _emulator.reset();
                       _toggleMenu();
                     },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.gamepad),
+                    title: const Text('Customize buttons'),
+                    onTap: _openLayoutEditor,
                   ),
                   ListTile(
                     leading: const Icon(Icons.exit_to_app),

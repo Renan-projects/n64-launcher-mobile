@@ -28,6 +28,7 @@
 #define RETRO_DEVICE_ID_JOYPAD_R 11
 #define RETRO_DEVICE_ID_JOYPAD_L2 12
 #define RETRO_DEVICE_ID_JOYPAD_R2 13
+#define RETRO_DEVICE_ID_JOYPAD_MASK 256
 
 #define PAD_DUP    (1 << 0)
 #define PAD_DDOWN  (1 << 1)
@@ -341,23 +342,24 @@ static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, un
     if (port != 0) return 0;
     int b = g_buttons;
     if (device == RETRO_DEVICE_JOYPAD) {
-        switch (id) {
-            case RETRO_DEVICE_ID_JOYPAD_B:      return (b & PAD_A) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_Y:      return (b & PAD_B) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_A:      return (b & PAD_CDOWN) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_X:      return (b & PAD_CUP) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_L:      return (b & PAD_CLEFT) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_R:      return (b & PAD_CRIGHT) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_L2:     return (b & PAD_Z) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_SELECT: return (b & PAD_L) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_R2:     return (b & PAD_R) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_START:  return (b & PAD_START) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_UP:     return (b & PAD_DUP) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_DOWN:   return (b & PAD_DDOWN) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_LEFT:   return (b & PAD_DLEFT) ? 1 : 0;
-            case RETRO_DEVICE_ID_JOYPAD_RIGHT:  return (b & PAD_DRIGHT) ? 1 : 0;
-            default:                            return 0;
-        }
+        int16_t m = 0;
+        if (b & PAD_A)      m |= (1 << RETRO_DEVICE_ID_JOYPAD_B);
+        if (b & PAD_B)      m |= (1 << RETRO_DEVICE_ID_JOYPAD_Y);
+        if (b & PAD_CDOWN)  m |= (1 << RETRO_DEVICE_ID_JOYPAD_A);
+        if (b & PAD_CUP)    m |= (1 << RETRO_DEVICE_ID_JOYPAD_X);
+        if (b & PAD_CLEFT)  m |= (1 << RETRO_DEVICE_ID_JOYPAD_L);
+        if (b & PAD_CRIGHT) m |= (1 << RETRO_DEVICE_ID_JOYPAD_R);
+        if (b & PAD_Z)      m |= (1 << RETRO_DEVICE_ID_JOYPAD_L2);
+        if (b & PAD_L)      m |= (1 << RETRO_DEVICE_ID_JOYPAD_SELECT);
+        if (b & PAD_R)      m |= (1 << RETRO_DEVICE_ID_JOYPAD_R2);
+        if (b & PAD_START)  m |= (1 << RETRO_DEVICE_ID_JOYPAD_START);
+        if (b & PAD_DUP)    m |= (1 << RETRO_DEVICE_ID_JOYPAD_UP);
+        if (b & PAD_DDOWN)  m |= (1 << RETRO_DEVICE_ID_JOYPAD_DOWN);
+        if (b & PAD_DLEFT)  m |= (1 << RETRO_DEVICE_ID_JOYPAD_LEFT);
+        if (b & PAD_DRIGHT) m |= (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT);
+        if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return m;
+        if (id > 15) return 0;
+        return (m >> id) & 1;
     }
     if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
         if (id == RETRO_DEVICE_ID_ANALOG_X) return (int16_t) (g_stick_x * 32767.0f);

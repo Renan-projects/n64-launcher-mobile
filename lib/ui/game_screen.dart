@@ -143,6 +143,22 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
           ),
+          const Positioned(
+            top: 6,
+            left: 10,
+            child: SafeArea(
+              child: IgnorePointer(
+                child: Text(
+                  'build B24',
+                  style: TextStyle(
+                    color: Color(0x99FFFFFF),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
           if (_menuOpen) _buildMenu(context),
         ],
       ),

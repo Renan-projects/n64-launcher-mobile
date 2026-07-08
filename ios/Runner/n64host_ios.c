@@ -48,6 +48,24 @@ struct retro_game_info {
     const char *meta;
 };
 
+struct retro_game_geometry {
+    unsigned base_width;
+    unsigned base_height;
+    unsigned max_width;
+    unsigned max_height;
+    float aspect_ratio;
+};
+
+struct retro_system_timing {
+    double fps;
+    double sample_rate;
+};
+
+struct retro_system_av_info {
+    struct retro_game_geometry geometry;
+    struct retro_system_timing timing;
+};
+
 struct retro_variable { const char *key; const char *value; };
 
 static const char *core_var(const char *key) {
@@ -93,6 +111,8 @@ struct core {
     size_t (*retro_serialize_size)(void);
     bool (*retro_serialize)(void *, size_t);
     bool (*retro_unserialize)(const void *, size_t);
+    void (*retro_get_system_av_info)(struct retro_system_av_info *);
+    void (*retro_set_controller_port_device)(unsigned, unsigned);
 };
 
 static struct core g_core;
@@ -218,6 +238,8 @@ static bool load_core(const char *path) {
     g_core.retro_serialize_size = resolve(g_core.handle, "retro_serialize_size");
     g_core.retro_serialize = resolve(g_core.handle, "retro_serialize");
     g_core.retro_unserialize = resolve(g_core.handle, "retro_unserialize");
+    g_core.retro_get_system_av_info = resolve(g_core.handle, "retro_get_system_av_info");
+    g_core.retro_set_controller_port_device = resolve(g_core.handle, "retro_set_controller_port_device");
     return g_core.retro_run && g_core.retro_load_game && g_core.retro_init;
 }
 
@@ -250,6 +272,18 @@ static bool startup(void) {
     info.data = g_rom_data;
     info.size = g_rom_size;
     if (!g_core.retro_load_game(&info)) return false;
+    if (g_core.retro_get_system_av_info) {
+        struct retro_system_av_info av;
+        memset(&av, 0, sizeof(av));
+        g_core.retro_get_system_av_info(&av);
+        printf("[n64host] av_info base=%ux%u max=%ux%u fps=%.2f rate=%.0f\n",
+               av.geometry.base_width, av.geometry.base_height,
+               av.geometry.max_width, av.geometry.max_height,
+               av.timing.fps, av.timing.sample_rate);
+    }
+    if (g_core.retro_set_controller_port_device) {
+        g_core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+    }
     if (g_have_hw && g_hw.context_reset) g_hw.context_reset();
     return true;
 }

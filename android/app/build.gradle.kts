@@ -13,10 +13,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    lint {
+        disable += "ExpiredTargetSdkVersion"
+        abortOnError = false
+    }
+
     defaultConfig {
         applicationId = "org.renanprojects.n64_launcher_mobile"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 28
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         ndk {

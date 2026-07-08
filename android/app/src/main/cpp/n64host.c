@@ -6,8 +6,24 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <malloc.h>
+#include <link.h>
+#include <elf.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <EGL/egl.h>
+#include <GLES3/gl3.h>
 #include <android/log.h>
+
+#ifndef M_BIONIC_SET_HEAP_TAGGING_LEVEL
+#define M_BIONIC_SET_HEAP_TAGGING_LEVEL (-206)
+#endif
+#ifndef M_HEAP_TAGGING_LEVEL_NONE
+#define M_HEAP_TAGGING_LEVEL_NONE 0
+#endif
+#ifndef M_HEAP_TAGGING_LEVEL_TBI
+#define M_HEAP_TAGGING_LEVEL_TBI 1
+#endif
 
 #define LOG_TAG "n64host"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -34,20 +50,10 @@ struct retro_variable { const char *key; const char *value; };
 
 static const char *core_var(const char *key) {
     if (!key) return NULL;
-    if (!strcmp(key, "mupen64plus-rdp-plugin")) return "gliden64";
+    if (!strcmp(key, "mupen64plus-rdp-plugin")) return "angrylion";
     if (!strcmp(key, "mupen64plus-rsp-plugin")) return "hle";
     if (!strcmp(key, "mupen64plus-ThreadedRenderer")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableFBEmulation")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableNativeResFactor")) return "1";
-    if (!strcmp(key, "mupen64plus-MultiSampling")) return "0";
-    if (!strcmp(key, "mupen64plus-EnableHWLighting")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableLODEmulation")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableCopyColorToRDRAM")) return "Off";
-    if (!strcmp(key, "mupen64plus-EnableCopyDepthToRDRAM")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableCopyAuxToRDRAM")) return "False";
-    if (!strcmp(key, "mupen64plus-BilinearMode")) return "standard";
-    if (!strcmp(key, "mupen64plus-Framerate")) return "Original";
-    if (!strcmp(key, "mupen64plus-CountPerOp")) return "2";
+    if (!strcmp(key, "mupen64plus-angrylion-vioverlay")) return "Filtered";
     return NULL;
 }
 
@@ -88,6 +94,24 @@ struct retro_game_info {
     const char *meta;
 };
 
+struct retro_game_geometry {
+    unsigned base_width;
+    unsigned base_height;
+    unsigned max_width;
+    unsigned max_height;
+    float aspect_ratio;
+};
+
+struct retro_system_timing {
+    double fps;
+    double sample_rate;
+};
+
+struct retro_system_av_info {
+    struct retro_game_geometry geometry;
+    struct retro_system_timing timing;
+};
+
 typedef bool (*retro_environment_t)(unsigned, void *);
 typedef void (*retro_video_refresh_t)(const void *, unsigned, unsigned, size_t);
 typedef void (*retro_audio_sample_t)(int16_t, int16_t);
@@ -112,6 +136,8 @@ struct core {
     size_t (*retro_serialize_size)(void);
     bool (*retro_serialize)(void *, size_t);
     bool (*retro_unserialize)(const void *, size_t);
+    void (*retro_get_system_av_info)(struct retro_system_av_info *);
+    void (*retro_set_controller_port_device)(unsigned, unsigned);
 };
 
 static struct core g_core;
@@ -142,21 +168,172 @@ static size_t g_rom_size = 0;
 
 static void *g_gles_lib = NULL;
 
-static retro_proc_address_t proc_address(const char *sym) {
-    void *p = (void *) eglGetProcAddress(sym);
-    if (!p) {
-        if (!g_gles_lib) {
-            g_gles_lib = dlopen("libGLESv3.so", RTLD_NOW | RTLD_GLOBAL);
-            if (!g_gles_lib) g_gles_lib = dlopen("libGLESv2.so", RTLD_NOW | RTLD_GLOBAL);
-        }
-        if (g_gles_lib) p = dlsym(g_gles_lib, sym);
+static GLuint g_fbo = 0;
+static GLuint g_fbo_tex = 0;
+static GLuint g_fbo_depth = 0;
+static int g_fbo_w = 0;
+static int g_fbo_h = 0;
+static int g_view_w = 0;
+static int g_view_h = 0;
+static int g_frame_w = 0;
+static int g_frame_h = 0;
+
+static void ensure_fbo(int w, int h) {
+    if (g_fbo && g_fbo_w == w && g_fbo_h == h) return;
+    if (g_fbo) {
+        glDeleteFramebuffers(1, &g_fbo);
+        glDeleteTextures(1, &g_fbo_tex);
+        glDeleteRenderbuffers(1, &g_fbo_depth);
+        g_fbo = g_fbo_tex = g_fbo_depth = 0;
     }
+    glGenTextures(1, &g_fbo_tex);
+    glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenRenderbuffers(1, &g_fbo_depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, g_fbo_depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+    glGenFramebuffers(1, &g_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_fbo_tex, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, g_fbo_depth);
+    GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (st != GL_FRAMEBUFFER_COMPLETE) LOGE("FBO incomplete 0x%x (%dx%d)", st, w, h);
+    else LOGI("FBO ready %dx%d id=%u tex=%u", w, h, g_fbo, g_fbo_tex);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    g_fbo_w = w;
+    g_fbo_h = h;
+}
+
+static void destroy_fbo(void) {
+    if (!g_fbo) return;
+    glDeleteFramebuffers(1, &g_fbo);
+    glDeleteTextures(1, &g_fbo_tex);
+    glDeleteRenderbuffers(1, &g_fbo_depth);
+    g_fbo = g_fbo_tex = g_fbo_depth = 0;
+    g_fbo_w = g_fbo_h = 0;
+}
+
+static int g_pixel_format = 1;
+
+static GLuint g_sw_prog = 0;
+static GLuint g_sw_tex = 0;
+static GLint g_sw_utex = -1;
+static int g_sw_w = 0;
+static int g_sw_h = 0;
+static bool g_have_sw = false;
+
+static const char *SW_VS =
+    "#version 300 es\n"
+    "out vec2 v_uv;\n"
+    "void main(){\n"
+    "  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+    "  v_uv = p;\n"
+    "  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+
+static const char *SW_FS =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "in vec2 v_uv;\n"
+    "uniform sampler2D u_tex;\n"
+    "out vec4 o;\n"
+    "void main(){\n"
+    "  vec4 c = texture(u_tex, vec2(v_uv.x, 1.0 - v_uv.y));\n"
+    "  o = vec4(c.b, c.g, c.r, 1.0);\n"
+    "}\n";
+
+static GLuint compile_sh(GLenum type, const char *src) {
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    GLint ok = 0;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetShaderInfoLog(s, sizeof(log), NULL, log);
+        LOGE("shader compile failed: %s", log);
+    }
+    return s;
+}
+
+static void init_sw_display(void) {
+    if (g_sw_prog) return;
+    GLuint vs = compile_sh(GL_VERTEX_SHADER, SW_VS);
+    GLuint fs = compile_sh(GL_FRAGMENT_SHADER, SW_FS);
+    g_sw_prog = glCreateProgram();
+    glAttachShader(g_sw_prog, vs);
+    glAttachShader(g_sw_prog, fs);
+    glLinkProgram(g_sw_prog);
+    GLint ok = 0;
+    glGetProgramiv(g_sw_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(g_sw_prog, sizeof(log), NULL, log);
+        LOGE("program link failed: %s", log);
+    }
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    g_sw_utex = glGetUniformLocation(g_sw_prog, "u_tex");
+    glGenTextures(1, &g_sw_tex);
+    glBindTexture(GL_TEXTURE_2D, g_sw_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    LOGI("sw display init prog=%u tex=%u", g_sw_prog, g_sw_tex);
+}
+
+static void upload_sw_frame(const void *data, unsigned w, unsigned h, size_t pitch) {
+    if (!g_sw_prog) init_sw_display();
+    glBindTexture(GL_TEXTURE_2D, g_sw_tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, (g_pixel_format == 2) ? 2 : 4);
+    GLint fmt = (g_pixel_format == 2) ? GL_RGB : GL_RGBA;
+    GLenum type = (g_pixel_format == 2) ? GL_UNSIGNED_SHORT_5_6_5 : GL_UNSIGNED_BYTE;
+    int bpp = (g_pixel_format == 2) ? 2 : 4;
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint) (pitch / bpp));
+    if ((int) w != g_sw_w || (int) h != g_sw_h) {
+        glTexImage2D(GL_TEXTURE_2D, 0, fmt, w, h, 0, fmt, type, data);
+        g_sw_w = (int) w;
+        g_sw_h = (int) h;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, fmt, type, data);
+    }
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    g_have_sw = true;
+}
+
+static void draw_sw_frame(void) {
+    if (!g_have_sw || !g_sw_prog || g_view_w <= 0 || g_view_h <= 0) return;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, g_view_w, g_view_h);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glUseProgram(g_sw_prog);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g_sw_tex);
+    glUniform1i(g_sw_utex, 0);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
+static retro_proc_address_t proc_address(const char *sym) {
+    if (!g_gles_lib) {
+        g_gles_lib = dlopen("libGLESv3.so", RTLD_NOW | RTLD_GLOBAL);
+        if (!g_gles_lib) g_gles_lib = dlopen("libGLESv2.so", RTLD_NOW | RTLD_GLOBAL);
+    }
+    void *p = g_gles_lib ? dlsym(g_gles_lib, sym) : NULL;
+    if (!p) p = (void *) eglGetProcAddress(sym);
     if (!p) LOGE("proc_address NULL for %s", sym);
     return (retro_proc_address_t) p;
 }
 
 static uintptr_t current_framebuffer(void) {
-    return 0;
+    return (uintptr_t) g_fbo;
 }
 
 static bool env_cb(unsigned cmd, void *data) {
@@ -165,6 +342,8 @@ static bool env_cb(unsigned cmd, void *data) {
             *(bool *) data = true;
             return true;
         case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
+            g_pixel_format = *(const int *) data;
+            LOGI("SET_PIXEL_FORMAT %d", g_pixel_format);
             return true;
         case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
             *(const char **) data = g_system_dir;
@@ -174,6 +353,9 @@ static bool env_cb(unsigned cmd, void *data) {
             return true;
         case RETRO_ENVIRONMENT_SET_HW_RENDER: {
             struct retro_hw_render_callback *hw = data;
+            LOGI("SET_HW_RENDER type=%u version=%u.%u depth=%d stencil=%d",
+                 hw->context_type, hw->version_major, hw->version_minor,
+                 hw->depth, hw->stencil);
             hw->get_current_framebuffer = current_framebuffer;
             hw->get_proc_address = proc_address;
             g_hw = *hw;
@@ -203,10 +385,13 @@ static bool env_cb(unsigned cmd, void *data) {
 }
 
 static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
-    (void) data;
-    (void) w;
-    (void) h;
-    (void) pitch;
+    if (!data) return;
+    if (data == RETRO_HW_FRAME_BUFFER_VALID) {
+        g_frame_w = (int) w;
+        g_frame_h = (int) h;
+        return;
+    }
+    upload_sw_frame(data, w, h, pitch);
 }
 
 static void audio_sample_cb(int16_t l, int16_t r) {
@@ -239,6 +424,90 @@ static void *resolve(void *handle, const char *name) {
     return sym;
 }
 
+static inline void *untag_ptr(void *p) {
+    return (void *) ((uintptr_t) p & 0x00FFFFFFFFFFFFFFULL);
+}
+
+static int g_free_calls = 0;
+
+static void wrap_free(void *p) {
+    if (g_free_calls < 3) {
+        LOGI("wrap_free #%d p=%p untag=%p", g_free_calls, p, untag_ptr(p));
+        g_free_calls++;
+    }
+    free(untag_ptr(p));
+}
+
+static void *wrap_realloc(void *p, size_t n) {
+    return realloc(untag_ptr(p), n);
+}
+
+static void patch_relocs(uintptr_t base, const Elf64_Rela *r, size_t n,
+                         const Elf64_Sym *symtab, const char *strtab) {
+    long ps = sysconf(_SC_PAGESIZE);
+    for (size_t i = 0; i < n; i++) {
+        uint32_t s = (uint32_t) ELF64_R_SYM(r[i].r_info);
+        const char *nm = strtab + symtab[s].st_name;
+        void *repl = NULL;
+        if (!strcmp(nm, "free")) repl = (void *) wrap_free;
+        else if (!strcmp(nm, "realloc")) repl = (void *) wrap_realloc;
+        if (!repl) continue;
+        void **slot = (void **) (base + r[i].r_offset);
+        void *page = (void *) ((uintptr_t) slot & ~((uintptr_t) ps - 1));
+        int mp = mprotect(page, ps, PROT_READ | PROT_WRITE);
+        void *before = *slot;
+        *slot = repl;
+        void *after = *slot;
+        LOGI("GOT %s @ %p mprotect=%d before=%p wrote=%p readback=%p",
+             nm, (void *) slot, mp, before, repl, after);
+    }
+}
+
+static void patch_core_allocator(void *any_core_sym) {
+    Dl_info di;
+    if (!dladdr(any_core_sym, &di) || !di.dli_fbase) {
+        LOGE("patch: dladdr failed");
+        return;
+    }
+    uintptr_t base = (uintptr_t) di.dli_fbase;
+    const Elf64_Ehdr *eh = (const Elf64_Ehdr *) base;
+    const Elf64_Phdr *ph = (const Elf64_Phdr *) (base + eh->e_phoff);
+    const Elf64_Dyn *dyn = NULL;
+    for (int i = 0; i < eh->e_phnum; i++) {
+        if (ph[i].p_type == PT_DYNAMIC) {
+            dyn = (const Elf64_Dyn *) (base + ph[i].p_vaddr);
+            break;
+        }
+    }
+    if (!dyn) {
+        LOGE("patch: no PT_DYNAMIC");
+        return;
+    }
+    const Elf64_Sym *symtab = NULL;
+    const char *strtab = NULL;
+    const Elf64_Rela *jmprel = NULL, *rela = NULL;
+    size_t pltsz = 0, relasz = 0, relaent = sizeof(Elf64_Rela);
+    for (const Elf64_Dyn *d = dyn; d->d_tag != DT_NULL; d++) {
+        uintptr_t v = (uintptr_t) d->d_un.d_ptr;
+        switch (d->d_tag) {
+            case DT_SYMTAB: symtab = (const Elf64_Sym *) (v < base ? base + v : v); break;
+            case DT_STRTAB: strtab = (const char *) (v < base ? base + v : v); break;
+            case DT_JMPREL: jmprel = (const Elf64_Rela *) (v < base ? base + v : v); break;
+            case DT_PLTRELSZ: pltsz = v; break;
+            case DT_RELA: rela = (const Elf64_Rela *) (v < base ? base + v : v); break;
+            case DT_RELASZ: relasz = v; break;
+            case DT_RELAENT: relaent = v ? v : sizeof(Elf64_Rela); break;
+            default: break;
+        }
+    }
+    if (!symtab || !strtab) {
+        LOGE("patch: no symtab/strtab");
+        return;
+    }
+    if (jmprel && pltsz) patch_relocs(base, jmprel, pltsz / relaent, symtab, strtab);
+    if (rela && relasz) patch_relocs(base, rela, relasz / relaent, symtab, strtab);
+}
+
 static bool load_core(const char *path) {
     g_core.handle = dlopen(path, RTLD_NOW);
     if (!g_core.handle) {
@@ -260,6 +529,9 @@ static bool load_core(const char *path) {
     g_core.retro_serialize_size = resolve(g_core.handle, "retro_serialize_size");
     g_core.retro_serialize = resolve(g_core.handle, "retro_serialize");
     g_core.retro_unserialize = resolve(g_core.handle, "retro_unserialize");
+    g_core.retro_get_system_av_info = resolve(g_core.handle, "retro_get_system_av_info");
+    g_core.retro_set_controller_port_device = resolve(g_core.handle, "retro_set_controller_port_device");
+    if (g_core.retro_run) patch_core_allocator((void *) g_core.retro_run);
     return g_core.retro_run && g_core.retro_load_game && g_core.retro_init;
 }
 
@@ -300,6 +572,22 @@ static bool startup(void) {
         LOGE("retro_load_game failed");
         return false;
     }
+    int fb_w = 640, fb_h = 480;
+    if (g_core.retro_get_system_av_info) {
+        struct retro_system_av_info av;
+        memset(&av, 0, sizeof(av));
+        g_core.retro_get_system_av_info(&av);
+        LOGI("av_info base=%ux%u max=%ux%u fps=%.2f rate=%.0f",
+             av.geometry.base_width, av.geometry.base_height,
+             av.geometry.max_width, av.geometry.max_height,
+             av.timing.fps, av.timing.sample_rate);
+        if (av.geometry.max_width > 0) fb_w = (int) av.geometry.max_width;
+        if (av.geometry.max_height > 0) fb_h = (int) av.geometry.max_height;
+    }
+    if (g_core.retro_set_controller_port_device) {
+        g_core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+    }
+    ensure_fbo(fb_w, fb_h);
     if (g_have_hw && g_hw.context_reset) g_hw.context_reset();
     return true;
 }
@@ -307,6 +595,7 @@ static bool startup(void) {
 static void teardown(void) {
     if (!g_core.handle) return;
     if (g_have_hw && g_hw.context_destroy) g_hw.context_destroy();
+    destroy_fbo();
     if (g_loaded && g_core.retro_unload_game) g_core.retro_unload_game();
     if (g_core.retro_deinit) g_core.retro_deinit();
     dlclose(g_core.handle);
@@ -352,6 +641,21 @@ static bool do_load(const char *path) {
     return ok;
 }
 
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    (void) vm;
+    (void) reserved;
+    void *probe = malloc(64);
+    LOGI("JNI_OnLoad probe=%p (top byte %02llx)", probe,
+         (unsigned long long) ((uintptr_t) probe >> 56));
+    free(probe);
+    void *t = malloc(64);
+    void *tagged = (void *) ((uintptr_t) t | 0x0200000000000000ULL);
+    LOGI("tagged-free test: freeing %p ...", tagged);
+    free(tagged);
+    LOGI("tagged-free test: SURVIVED (free masks the top byte)");
+    return JNI_VERSION_1_6;
+}
+
 #define FN(name) Java_org_renanprojects_n64_1launcher_1mobile_NativeLib_##name
 
 JNIEXPORT void JNICALL
@@ -380,8 +684,8 @@ FN(nativeOnSurfaceCreated)(JNIEnv *env, jobject thiz) {
 
 JNIEXPORT void JNICALL
 FN(nativeOnSurfaceChanged)(JNIEnv *env, jobject thiz, jint width, jint height) {
-    (void) width;
-    (void) height;
+    g_view_w = width;
+    g_view_h = height;
 }
 
 JNIEXPORT void JNICALL
@@ -404,6 +708,17 @@ FN(nativeRunFrame)(JNIEnv *env, jobject thiz) {
     }
 
     g_core.retro_run();
+
+    if (g_have_sw) {
+        draw_sw_frame();
+    } else if (g_fbo && g_frame_w > 0 && g_frame_h > 0 && g_view_w > 0 && g_view_h > 0) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, g_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, g_frame_w, g_frame_h,
+                          0, 0, g_view_w, g_view_h,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
 }
 
 JNIEXPORT void JNICALL

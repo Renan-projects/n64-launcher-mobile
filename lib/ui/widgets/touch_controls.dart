@@ -44,7 +44,7 @@ class _TouchControlsState extends State<TouchControls> {
   int _buttons = 0;
   double _stickX = 0;
   double _stickY = 0;
-  final Map<ControlElement, Offset> _stickKnobs = {};
+  final Map<ControlElement, ({Offset base, Offset knob})> _sticks = {};
 
   void _emit() {
     widget.onChanged(PadState(
@@ -75,7 +75,7 @@ class _TouchControlsState extends State<TouchControls> {
         final touch = _Touch(_TouchKind.stick, element: e, stickBase: base)
           ..current = pos;
         _touches[pointer] = touch;
-        _stickKnobs[e] = base;
+        _sticks[e] = (base: base, knob: base);
         _updateStick(e, base, pos);
         _recompute();
         return;
@@ -89,15 +89,15 @@ class _TouchControlsState extends State<TouchControls> {
     touch.current = pos;
     if (touch.kind == _TouchKind.stick && touch.element != null) {
       _updateStick(touch.element!, touch.stickBase!, pos);
-      _recompute();
     }
+    _recompute();
   }
 
   void _up(int pointer) {
     final touch = _touches.remove(pointer);
     if (touch == null) return;
     if (touch.kind == _TouchKind.stick && touch.element != null) {
-      _stickKnobs.remove(touch.element);
+      _sticks.remove(touch.element);
       _stickX = 0;
       _stickY = 0;
     }
@@ -118,18 +118,35 @@ class _TouchControlsState extends State<TouchControls> {
     if (delta.distance > radius) {
       delta = delta * (radius / delta.distance);
     }
-    _stickKnobs[e] = base + delta;
     _stickX = (delta.dx / radius).clamp(-1.0, 1.0);
     _stickY = (-delta.dy / radius).clamp(-1.0, 1.0);
+    _sticks[e] = (base: base, knob: base + delta);
+  }
+
+  int _dpadMask(ControlElement e, Offset pos) {
+    final r = e.resolve(_size);
+    final c = r.center;
+    final dzx = r.width * 0.15;
+    final dzy = r.height * 0.15;
+    var m = 0;
+    if (pos.dy < c.dy - dzy) m |= PadButton.dpadUp.mask;
+    if (pos.dy > c.dy + dzy) m |= PadButton.dpadDown.mask;
+    if (pos.dx < c.dx - dzx) m |= PadButton.dpadLeft.mask;
+    if (pos.dx > c.dx + dzx) m |= PadButton.dpadRight.mask;
+    return m;
   }
 
   void _recompute() {
     var buttons = 0;
     for (final touch in _touches.values) {
-      if (touch.kind == _TouchKind.button &&
-          touch.element?.button != null &&
-          _hit(touch.element!, touch.element!.resolve(_size), touch.current)) {
-        buttons |= touch.element!.button!.mask;
+      final e = touch.element;
+      if (e == null) continue;
+      if (e.shape == ControlShape.dpad) {
+        buttons |= _dpadMask(e, touch.current);
+      } else if (touch.kind == _TouchKind.button &&
+          e.button != null &&
+          _hit(e, e.resolve(_size), touch.current)) {
+        buttons |= e.button!.mask;
       }
     }
     if (buttons != _buttons) {
@@ -162,7 +179,7 @@ class _TouchControlsState extends State<TouchControls> {
               painter: _ControlsPainter(
                 elements: widget.layout.elements,
                 buttons: _buttons,
-                knobs: _stickKnobs,
+                sticks: _sticks,
                 size: _size,
               ),
             ),
@@ -177,13 +194,13 @@ class _ControlsPainter extends CustomPainter {
   _ControlsPainter({
     required this.elements,
     required this.buttons,
-    required this.knobs,
+    required this.sticks,
     required this.size,
   });
 
   final List<ControlElement> elements;
   final int buttons;
-  final Map<ControlElement, Offset> knobs;
+  final Map<ControlElement, ({Offset base, Offset knob})> sticks;
   final Size size;
 
   @override
@@ -241,15 +258,17 @@ class _ControlsPainter extends CustomPainter {
 
   void _stick(Canvas canvas, ControlElement e, Rect r) {
     final radius = min(r.width, r.height) / 2;
-    final knob = knobs[e];
-    final base = knob == null && e.floating ? null : r.center;
-    final active = knob != null;
-    final center = active ? (base ?? knob) : r.center;
+    final view = sticks[e];
+    final active = view != null;
+    // Floating stick: rest hidden/faint, and when held it appears under the
+    // finger (base follows the touch-down point). Fixed stick stays at r.center.
+    final base = active ? view.base : r.center;
+    final knob = active ? view.knob : r.center;
     final faint = e.floating && !active;
-    final a = faint ? 0.5 : 1.0;
-    canvas.drawCircle(center, radius, Paint()..color = _base.withValues(alpha: a));
+    final a = faint ? 0.35 : 1.0;
+    canvas.drawCircle(base, radius, Paint()..color = _base.withValues(alpha: a));
     canvas.drawCircle(
-      center,
+      base,
       radius,
       Paint()
         ..color = _outline.withValues(alpha: a)
@@ -257,7 +276,7 @@ class _ControlsPainter extends CustomPainter {
         ..strokeWidth = 2,
     );
     canvas.drawCircle(
-      knob ?? center,
+      knob,
       radius * 0.45,
       Paint()..color = (active ? _accent : _knob).withValues(alpha: a),
     );
@@ -308,6 +327,5 @@ class _ControlsPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ControlsPainter old) =>
-      old.buttons != buttons || old.knobs != knobs || old.size != size;
+  bool shouldRepaint(_ControlsPainter old) => true;
 }

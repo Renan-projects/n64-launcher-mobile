@@ -6,5 +6,6 @@ add_library(n64host SHARED n64host.c)
 find_library(log-lib log)
 find_library(egl-lib EGL)
 find_library(gles-lib GLESv3)
+find_library(sles-lib OpenSLES)
 
-target_link_libraries(n64host ${log-lib} ${egl-lib} ${gles-lib})
+target_link_libraries(n64host ${log-lib} ${egl-lib} ${gles-lib} ${sles-lib})

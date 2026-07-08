@@ -13,6 +13,9 @@
 #include <unistd.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include <SLES/OpenSLES.h>
+#include <SLES/OpenSLES_Android.h>
+#include <pthread.h>
 #include <android/log.h>
 
 #ifndef M_BIONIC_SET_HEAP_TAGGING_LEVEL
@@ -444,13 +447,109 @@ static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
     upload_sw_frame(data, w, h, pitch);
 }
 
+/* --- OpenSL ES audio output (16-bit stereo, core sample rate) --- */
+#define SL_RING_FRAMES 32768
+#define SL_CHUNK_FRAMES 1024
+static SLObjectItf g_sl_engine_obj = NULL;
+static SLEngineItf g_sl_engine = NULL;
+static SLObjectItf g_sl_mix_obj = NULL;
+static SLObjectItf g_sl_player_obj = NULL;
+static SLPlayItf g_sl_play = NULL;
+static SLAndroidSimpleBufferQueueItf g_sl_bq = NULL;
+static int16_t g_ring[SL_RING_FRAMES * 2];
+static volatile size_t g_ring_wr = 0;
+static volatile size_t g_ring_rd = 0;
+static int16_t g_sl_chunk[2][SL_CHUNK_FRAMES * 2];
+static int g_sl_chunk_idx = 0;
+static pthread_mutex_t g_ring_mtx = PTHREAD_MUTEX_INITIALIZER;
+static int g_audio_rate = 44100;
+
+static void ring_write(const int16_t *data, size_t frames) {
+    pthread_mutex_lock(&g_ring_mtx);
+    for (size_t i = 0; i < frames; i++) {
+        size_t next = (g_ring_wr + 1) % SL_RING_FRAMES;
+        if (next == g_ring_rd) break; /* full: drop */
+        g_ring[g_ring_wr * 2] = data[i * 2];
+        g_ring[g_ring_wr * 2 + 1] = data[i * 2 + 1];
+        g_ring_wr = next;
+    }
+    pthread_mutex_unlock(&g_ring_mtx);
+}
+
+static void sl_feed(void) {
+    int16_t *chunk = g_sl_chunk[g_sl_chunk_idx];
+    g_sl_chunk_idx ^= 1;
+    pthread_mutex_lock(&g_ring_mtx);
+    for (size_t i = 0; i < SL_CHUNK_FRAMES; i++) {
+        if (g_ring_rd == g_ring_wr) {
+            chunk[i * 2] = 0;
+            chunk[i * 2 + 1] = 0;
+        } else {
+            chunk[i * 2] = g_ring[g_ring_rd * 2];
+            chunk[i * 2 + 1] = g_ring[g_ring_rd * 2 + 1];
+            g_ring_rd = (g_ring_rd + 1) % SL_RING_FRAMES;
+        }
+    }
+    pthread_mutex_unlock(&g_ring_mtx);
+    (*g_sl_bq)->Enqueue(g_sl_bq, chunk, SL_CHUNK_FRAMES * 2 * sizeof(int16_t));
+}
+
+static void sl_bq_cb(SLAndroidSimpleBufferQueueItf bq, void *ctx) {
+    (void) bq;
+    (void) ctx;
+    sl_feed();
+}
+
+static void teardown_audio(void) {
+    if (g_sl_player_obj) { (*g_sl_player_obj)->Destroy(g_sl_player_obj); g_sl_player_obj = NULL; }
+    if (g_sl_mix_obj) { (*g_sl_mix_obj)->Destroy(g_sl_mix_obj); g_sl_mix_obj = NULL; }
+    if (g_sl_engine_obj) { (*g_sl_engine_obj)->Destroy(g_sl_engine_obj); g_sl_engine_obj = NULL; }
+    g_sl_engine = NULL; g_sl_play = NULL; g_sl_bq = NULL;
+    g_ring_rd = g_ring_wr = 0;
+}
+
+static void init_audio(int sample_rate) {
+    if (g_sl_engine_obj) return;
+    g_audio_rate = sample_rate > 0 ? sample_rate : 44100;
+
+    if (slCreateEngine(&g_sl_engine_obj, 0, NULL, 0, NULL, NULL) != SL_RESULT_SUCCESS) { LOGE("slCreateEngine failed"); return; }
+    (*g_sl_engine_obj)->Realize(g_sl_engine_obj, SL_BOOLEAN_FALSE);
+    (*g_sl_engine_obj)->GetInterface(g_sl_engine_obj, SL_IID_ENGINE, &g_sl_engine);
+    (*g_sl_engine)->CreateOutputMix(g_sl_engine, &g_sl_mix_obj, 0, NULL, NULL);
+    (*g_sl_mix_obj)->Realize(g_sl_mix_obj, SL_BOOLEAN_FALSE);
+
+    SLDataLocator_AndroidSimpleBufferQueue loc_bq = { SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 2 };
+    SLDataFormat_PCM fmt = {
+        SL_DATAFORMAT_PCM, 2, (SLuint32) (g_audio_rate * 1000),
+        SL_PCMSAMPLEFORMAT_FIXED_16, SL_PCMSAMPLEFORMAT_FIXED_16,
+        SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT, SL_BYTEORDER_LITTLEENDIAN
+    };
+    SLDataSource src = { &loc_bq, &fmt };
+    SLDataLocator_OutputMix loc_mix = { SL_DATALOCATOR_OUTPUTMIX, g_sl_mix_obj };
+    SLDataSink sink = { &loc_mix, NULL };
+    const SLInterfaceID ids[1] = { SL_IID_BUFFERQUEUE };
+    const SLboolean req[1] = { SL_BOOLEAN_TRUE };
+    if ((*g_sl_engine)->CreateAudioPlayer(g_sl_engine, &g_sl_player_obj, &src, &sink, 1, ids, req) != SL_RESULT_SUCCESS) {
+        LOGE("CreateAudioPlayer failed");
+        return;
+    }
+    (*g_sl_player_obj)->Realize(g_sl_player_obj, SL_BOOLEAN_FALSE);
+    (*g_sl_player_obj)->GetInterface(g_sl_player_obj, SL_IID_PLAY, &g_sl_play);
+    (*g_sl_player_obj)->GetInterface(g_sl_player_obj, SL_IID_BUFFERQUEUE, &g_sl_bq);
+    (*g_sl_bq)->RegisterCallback(g_sl_bq, sl_bq_cb, NULL);
+    (*g_sl_play)->SetPlayState(g_sl_play, SL_PLAYSTATE_PLAYING);
+    LOGI("audio init rate=%d", g_audio_rate);
+    sl_feed();
+    sl_feed();
+}
+
 static void audio_sample_cb(int16_t l, int16_t r) {
-    (void) l;
-    (void) r;
+    int16_t frame[2] = { l, r };
+    ring_write(frame, 1);
 }
 
 static size_t audio_batch_cb(const int16_t *data, size_t frames) {
-    (void) data;
+    ring_write(data, frames);
     return frames;
 }
 
@@ -665,6 +764,9 @@ static bool startup(void) {
              av.timing.fps, av.timing.sample_rate);
         if (av.geometry.max_width > 0) fb_w = (int) av.geometry.max_width;
         if (av.geometry.max_height > 0) fb_h = (int) av.geometry.max_height;
+        init_audio(av.timing.sample_rate > 0 ? (int) av.timing.sample_rate : 44100);
+    } else {
+        init_audio(44100);
     }
     if (g_core.retro_set_controller_port_device) {
         g_core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
@@ -676,6 +778,7 @@ static bool startup(void) {
 
 static void teardown(void) {
     if (!g_core.handle) return;
+    teardown_audio();
     if (g_have_hw && g_hw.context_destroy) g_hw.context_destroy();
     destroy_fbo();
     if (g_loaded && g_core.retro_unload_game) g_core.retro_unload_game();

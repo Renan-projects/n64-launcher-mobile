@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <OpenGLES/ES3/gl.h>
 
 #define RETRO_HW_FRAME_BUFFER_VALID ((void *) -1)
@@ -53,7 +54,10 @@
 #define RETRO_ENVIRONMENT_SET_HW_RENDER 14
 #define RETRO_ENVIRONMENT_GET_VARIABLE 15
 #define RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE 17
+#define RETRO_ENVIRONMENT_GET_LOG_INTERFACE 27
 #define RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY 31
+
+struct retro_log_callback { void (*log)(int level, const char *fmt, ...); };
 
 typedef void (*retro_proc_address_t)(void);
 typedef retro_proc_address_t (*retro_hw_get_proc_address_t)(const char *sym);
@@ -292,6 +296,14 @@ static void draw_sw_frame(void) {
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
+static void core_log(int level, const char *fmt, ...) {
+    (void) level;
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+}
+
 static bool env_cb(unsigned cmd, void *data) {
     switch (cmd) {
         case RETRO_ENVIRONMENT_GET_CAN_DUPE:
@@ -327,6 +339,9 @@ static bool env_cb(unsigned cmd, void *data) {
         }
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
             *(bool *) data = false;
+            return true;
+        case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+            ((struct retro_log_callback *) data)->log = core_log;
             return true;
         default:
             return false;

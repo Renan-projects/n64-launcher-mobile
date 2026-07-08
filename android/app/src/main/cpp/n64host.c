@@ -104,8 +104,16 @@ static char g_pending_load[1024];
 static volatile bool g_do_save = false;
 static volatile bool g_do_load = false;
 
+static void *g_gles_lib = NULL;
+
 static retro_proc_address_t proc_address(const char *sym) {
-    return (retro_proc_address_t) eglGetProcAddress(sym);
+    if (!g_gles_lib) {
+        g_gles_lib = dlopen("libGLESv3.so", RTLD_NOW | RTLD_GLOBAL);
+        if (!g_gles_lib) g_gles_lib = dlopen("libGLESv2.so", RTLD_NOW | RTLD_GLOBAL);
+    }
+    void *p = g_gles_lib ? dlsym(g_gles_lib, sym) : NULL;
+    if (!p) p = (void *) eglGetProcAddress(sym);
+    return (retro_proc_address_t) p;
 }
 
 static uintptr_t current_framebuffer(void) {

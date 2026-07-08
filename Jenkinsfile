@@ -44,6 +44,12 @@ fi
 git config --global --add safe.directory '*' || true
 flutter config --no-analytics >/dev/null 2>&1 || true
 flutter pub get
+mkdir -p ios/Runner/cores
+if [ ! -f ios/Runner/cores/mupen64plus_next.dylib ]; then
+  curl -fSL -o /tmp/core-ios.zip "https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/mupen64plus_next_libretro_ios.dylib.zip"
+  unzip -o -q /tmp/core-ios.zip -d /tmp/core-ios
+  cp /tmp/core-ios/*.dylib ios/Runner/cores/mupen64plus_next.dylib
+fi
 flutter build ios --release --no-codesign
 rm -rf build/ipa-work
 mkdir -p build/ipa-work/Payload

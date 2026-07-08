@@ -46,3 +46,6 @@ app.*.map.json
 
 # Bundled libretro cores (fetched with scripts/fetch_cores.sh)
 android/app/src/main/assets/cores/
+
+# Bundled iOS libretro core (fetched in CI / by fetch_cores.sh)
+ios/Runner/cores/

@@ -46,16 +46,53 @@ final class EmulatorHost {
                 result("error")
                 return
             }
-            guard corePath() != nil else {
+            guard let core = corePath() else {
                 result("missingCore")
                 return
             }
             currentRom = rom
+            n64_set_paths(core, rom, systemDir().path, saveDir().path)
             result("running")
-        case "stop", "pause", "resume", "reset", "input", "saveState", "deleteSaveSlot":
+        case "stop":
+            n64_pause(true)
+            currentRom = nil
+            result(nil)
+        case "pause":
+            n64_pause(true)
+            result(nil)
+        case "resume":
+            n64_pause(false)
+            result(nil)
+        case "reset":
+            n64_reset()
+            result(nil)
+        case "input":
+            let args = call.arguments as? [String: Any]
+            let buttons = (args?["buttons"] as? Int) ?? 0
+            let sx = Float((args?["stickX"] as? Double) ?? 0)
+            let sy = Float((args?["stickY"] as? Double) ?? 0)
+            n64_set_input(Int32(buttons), sx, sy)
+            result(nil)
+        case "saveState":
+            let slot = (call.arguments as? [String: Any])?["slot"] as? Int ?? 0
+            if let file = slotFile(currentRom, slot) { n64_save_state(file.path) }
             result(nil)
         case "loadState":
-            result("running")
+            let slot = (call.arguments as? [String: Any])?["slot"] as? Int ?? 0
+            if let file = slotFile(currentRom, slot),
+               FileManager.default.fileExists(atPath: file.path) {
+                _ = n64_load_state(file.path)
+                result("running")
+            } else {
+                result("error")
+            }
+        case "deleteSaveSlot":
+            let args = call.arguments as? [String: Any]
+            let slot = args?["slot"] as? Int ?? 0
+            if let file = slotFile(args?["rom"] as? String, slot) {
+                try? FileManager.default.removeItem(at: file)
+            }
+            result(nil)
         case "saveSlots":
             let rom = (call.arguments as? [String: Any])?["rom"] as? String
             result(listSlots(rom))
@@ -68,23 +105,33 @@ final class EmulatorHost {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    private func coreDir() -> URL {
-        let dir = documentsDir().appendingPathComponent("cores")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
     private func statesDir() -> URL {
         let dir = documentsDir().appendingPathComponent("states")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
+    private func systemDir() -> URL {
+        let dir = documentsDir().appendingPathComponent("system")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func saveDir() -> URL {
+        let dir = documentsDir().appendingPathComponent("saves")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     private func corePath() -> String? {
-        let files = try? FileManager.default.contentsOfDirectory(
-            at: coreDir(), includingPropertiesForKeys: nil
-        )
-        return files?.first(where: { $0.pathExtension == "dylib" })?.path
+        Bundle.main.path(forResource: "mupen64plus_next", ofType: "dylib")
+    }
+
+    private func slotFile(_ rom: String?, _ slot: Int) -> URL? {
+        guard let rom = rom else { return nil }
+        let name = (rom as NSString).lastPathComponent
+        let base = (name as NSString).deletingPathExtension
+        return statesDir().appendingPathComponent("\(base).state\(slot)")
     }
 
     private func listSlots(_ rom: String?) -> [[String: Any?]] {

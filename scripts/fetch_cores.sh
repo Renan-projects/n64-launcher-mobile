@@ -13,3 +13,11 @@ for abi in arm64-v8a armeabi-v7a; do
   rm -f "$tmp"
   echo "installed $abi/$CORE"
 done
+
+mkdir -p ios/Runner/cores
+tmp="$(mktemp)"
+curl -fSL -o "$tmp" "https://buildbot.libretro.com/nightly/apple/ios-arm64/latest/mupen64plus_next_libretro_ios.dylib.zip"
+unzip -o -q "$tmp" -d /tmp/core-ios
+cp /tmp/core-ios/*.dylib ios/Runner/cores/mupen64plus_next.dylib
+rm -f "$tmp"
+echo "installed ios core"

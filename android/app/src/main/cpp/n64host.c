@@ -599,8 +599,8 @@ static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, un
         return (m >> id) & 1;
     }
     if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
-        if (id == RETRO_DEVICE_ID_ANALOG_X) { int16_t v=(int16_t)(g_stick_x*32767.0f); if(v){static int n=0; if(n++<30) LOGI("QX=%d", v);} return v; }
-        if (id == RETRO_DEVICE_ID_ANALOG_Y) { int16_t v=(int16_t)(-g_stick_y*32767.0f); if(v){static int n=0; if(n++<30) LOGI("QY=%d", v);} return v; }
+        if (id == RETRO_DEVICE_ID_ANALOG_X) return (int16_t)(g_stick_x * 32767.0f);
+        if (id == RETRO_DEVICE_ID_ANALOG_Y) return (int16_t)(-g_stick_y * 32767.0f);
     }
     return 0;
 }

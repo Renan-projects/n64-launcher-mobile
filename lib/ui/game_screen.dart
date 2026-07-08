@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/control_element.dart';
-import '../models/pad_button.dart';
 import '../models/rom.dart';
 import '../services/controller_monitor.dart';
 import '../services/emulator_service.dart';
@@ -30,7 +29,6 @@ class _GameScreenState extends State<GameScreen> {
   final EmulatorService _emulator = EmulatorService.instance;
   EmulatorStatus _status = EmulatorStatus.loading;
   bool _menuOpen = false;
-  PadState _dbg = PadState();
 
   @override
   void initState() {
@@ -133,14 +131,7 @@ class _GameScreenState extends State<GameScreen> {
                   ControlLayout.landscape.withOverrides(settings.controlLayout),
               opacity: settings.controlsOpacity,
               haptics: settings.haptics,
-              onChanged: (s) {
-                _emulator.sendInput(s);
-                if (s.buttons != _dbg.buttons ||
-                    s.stickX != _dbg.stickX ||
-                    s.stickY != _dbg.stickY) {
-                  setState(() => _dbg = s);
-                }
-              },
+              onChanged: _emulator.sendInput,
             ),
           Positioned(
             top: 8,
@@ -149,23 +140,6 @@ class _GameScreenState extends State<GameScreen> {
               child: IconButton.filledTonal(
                 icon: Icon(_menuOpen ? Icons.close : Icons.menu),
                 onPressed: _toggleMenu,
-              ),
-            ),
-          ),
-          Positioned(
-            top: 6,
-            left: 10,
-            child: SafeArea(
-              child: IgnorePointer(
-                child: Text(
-                  'B25  in=0x${_dbg.buttons.toRadixString(16)} '
-                  'stick=${(_dbg.stickX * 100).toInt()},${(_dbg.stickY * 100).toInt()}',
-                  style: const TextStyle(
-                    color: Color(0xCC33FF66),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
               ),
             ),
           ),

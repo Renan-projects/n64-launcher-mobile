@@ -97,6 +97,9 @@ static char g_pending_load[1024];
 static volatile bool g_do_save = false;
 static volatile bool g_do_load = false;
 
+static void *g_rom_data = NULL;
+static size_t g_rom_size = 0;
+
 static retro_proc_address_t proc_address(const char *sym) {
     return (retro_proc_address_t) dlsym(RTLD_DEFAULT, sym);
 }
@@ -196,9 +199,24 @@ static bool startup(void) {
     g_core.retro_set_input_state(input_state_cb);
     g_core.retro_init();
 
+    FILE *rf = fopen(g_rom_path, "rb");
+    if (!rf) return false;
+    fseek(rf, 0, SEEK_END);
+    long rsize = ftell(rf);
+    fseek(rf, 0, SEEK_SET);
+    g_rom_data = malloc(rsize);
+    if (!g_rom_data || fread(g_rom_data, 1, rsize, rf) != (size_t) rsize) {
+        fclose(rf);
+        return false;
+    }
+    fclose(rf);
+    g_rom_size = (size_t) rsize;
+
     struct retro_game_info info;
     memset(&info, 0, sizeof(info));
     info.path = g_rom_path;
+    info.data = g_rom_data;
+    info.size = g_rom_size;
     if (!g_core.retro_load_game(&info)) return false;
     if (g_have_hw && g_hw.context_reset) g_hw.context_reset();
     return true;
@@ -275,6 +293,9 @@ void n64_teardown(void) {
     g_have_hw = false;
     g_loaded = false;
     g_want_load = false;
+    free(g_rom_data);
+    g_rom_data = NULL;
+    g_rom_size = 0;
 }
 
 void n64_pause(bool paused) { g_paused = paused; }

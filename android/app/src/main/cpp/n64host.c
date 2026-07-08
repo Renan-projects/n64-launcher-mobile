@@ -116,6 +116,9 @@ static char g_pending_load[1024];
 static volatile bool g_do_save = false;
 static volatile bool g_do_load = false;
 
+static void *g_rom_data = NULL;
+static size_t g_rom_size = 0;
+
 static void *g_gles_lib = NULL;
 
 static retro_proc_address_t proc_address(const char *sym) {
@@ -239,9 +242,28 @@ static bool startup(void) {
     g_core.retro_set_input_state(input_state_cb);
     g_core.retro_init();
 
+    FILE *rf = fopen(g_rom_path, "rb");
+    if (!rf) {
+        LOGE("cannot open ROM %s", g_rom_path);
+        return false;
+    }
+    fseek(rf, 0, SEEK_END);
+    long rsize = ftell(rf);
+    fseek(rf, 0, SEEK_SET);
+    g_rom_data = malloc(rsize);
+    if (!g_rom_data || fread(g_rom_data, 1, rsize, rf) != (size_t) rsize) {
+        LOGE("cannot read ROM %s", g_rom_path);
+        fclose(rf);
+        return false;
+    }
+    fclose(rf);
+    g_rom_size = (size_t) rsize;
+
     struct retro_game_info info;
     memset(&info, 0, sizeof(info));
     info.path = g_rom_path;
+    info.data = g_rom_data;
+    info.size = g_rom_size;
     if (!g_core.retro_load_game(&info)) {
         LOGE("retro_load_game failed");
         return false;
@@ -259,6 +281,9 @@ static void teardown(void) {
     memset(&g_core, 0, sizeof(g_core));
     g_have_hw = false;
     g_loaded = false;
+    free(g_rom_data);
+    g_rom_data = NULL;
+    g_rom_size = 0;
 }
 
 static void write_file(const char *path, const void *data, size_t size) {

@@ -59,7 +59,7 @@ class _TouchControlsState extends State<TouchControls> {
       final r = e.resolve(_size);
       if (e.shape == ControlShape.stick) continue;
       if (_hit(e, r, pos)) {
-        _touches[pointer] = _Touch(_TouchKind.button, element: e);
+        _touches[pointer] = _Touch(_TouchKind.button, element: e)..current = pos;
         if (e.button != null) _buttons |= e.button!.mask;
         _haptic();
         _recompute();

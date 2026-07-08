@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <time.h>
 #include <malloc.h>
 #include <link.h>
 #include <elf.h>
@@ -779,6 +780,21 @@ FN(nativeRunFrame)(JNIEnv *env, jobject thiz) {
 
     g_core.retro_run();
 
+    {
+        static int fps_frames = 0;
+        static double fps_last = 0;
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        double t = ts.tv_sec + ts.tv_nsec / 1e9;
+        fps_frames++;
+        if (fps_last == 0) fps_last = t;
+        if (t - fps_last >= 1.0) {
+            LOGI("FPS ~%.1f", fps_frames / (t - fps_last));
+            fps_frames = 0;
+            fps_last = t;
+        }
+    }
+
     if (g_have_sw) {
         draw_sw_frame();
     } else if (g_fbo && g_frame_w > 0 && g_frame_h > 0 && g_view_w > 0 && g_view_h > 0) {
@@ -815,6 +831,7 @@ FN(nativeReset)(JNIEnv *env, jobject thiz) {
 
 JNIEXPORT void JNICALL
 FN(nativeSetInput)(JNIEnv *env, jobject thiz, jint buttons, jfloat stickX, jfloat stickY) {
+    if (buttons != g_buttons) LOGI("input buttons=0x%x stick=%.2f,%.2f", buttons, stickX, stickY);
     g_buttons = buttons;
     g_stick_x = stickX;
     g_stick_y = stickY;

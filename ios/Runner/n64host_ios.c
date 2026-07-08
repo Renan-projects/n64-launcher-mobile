@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include <OpenGLES/ES3/gl.h>
 
+#define RETRO_HW_FRAME_BUFFER_VALID ((void *) -1)
+
 #define RETRO_DEVICE_JOYPAD 1
 #define RETRO_DEVICE_ANALOG 5
 #define RETRO_DEVICE_INDEX_ANALOG_LEFT 0

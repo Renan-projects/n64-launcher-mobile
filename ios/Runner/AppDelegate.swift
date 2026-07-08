@@ -1,5 +1,7 @@
 import Flutter
 import UIKit
+import AVFoundation
+import AudioToolbox
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -9,6 +11,10 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // Route the emulator's AudioQueue output to the speaker even when the
+    // ringer switch is silent, and keep it audible in the background of mixing.
+    try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+    try? AVAudioSession.sharedInstance().setActive(true)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

@@ -6,7 +6,9 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <pthread.h>
 #include <OpenGLES/ES3/gl.h>
+#include <AudioToolbox/AudioToolbox.h>
 
 #define RETRO_HW_FRAME_BUFFER_VALID ((void *) -1)
 
@@ -354,10 +356,97 @@ static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
     upload_sw_frame(data, w, h, pitch);
 }
 
-static void audio_sample_cb(int16_t l, int16_t r) { (void) l; (void) r; }
+/* --- AudioQueue output (16-bit stereo, core sample rate) --- */
+#define AQ_RING_FRAMES 32768
+#define AQ_CHUNK_FRAMES 1024
+#define AQ_NUM_BUFFERS 3
+static int16_t g_ring[AQ_RING_FRAMES * 2];
+static volatile size_t g_ring_wr = 0;
+static volatile size_t g_ring_rd = 0;
+static pthread_mutex_t g_ring_mtx = PTHREAD_MUTEX_INITIALIZER;
+static AudioQueueRef g_aq = NULL;
+static int g_audio_rate = 44100;
+
+static void ring_write(const int16_t *data, size_t frames) {
+    pthread_mutex_lock(&g_ring_mtx);
+    for (size_t i = 0; i < frames; i++) {
+        size_t next = (g_ring_wr + 1) % AQ_RING_FRAMES;
+        if (next == g_ring_rd) break; /* full: drop */
+        g_ring[g_ring_wr * 2] = data[i * 2];
+        g_ring[g_ring_wr * 2 + 1] = data[i * 2 + 1];
+        g_ring_wr = next;
+    }
+    pthread_mutex_unlock(&g_ring_mtx);
+}
+
+static void aq_fill(AudioQueueBufferRef buf) {
+    int16_t *out = (int16_t *) buf->mAudioData;
+    pthread_mutex_lock(&g_ring_mtx);
+    for (size_t i = 0; i < AQ_CHUNK_FRAMES; i++) {
+        if (g_ring_rd == g_ring_wr) {
+            out[i * 2] = 0;
+            out[i * 2 + 1] = 0;
+        } else {
+            out[i * 2] = g_ring[g_ring_rd * 2];
+            out[i * 2 + 1] = g_ring[g_ring_rd * 2 + 1];
+            g_ring_rd = (g_ring_rd + 1) % AQ_RING_FRAMES;
+        }
+    }
+    pthread_mutex_unlock(&g_ring_mtx);
+    buf->mAudioDataByteSize = AQ_CHUNK_FRAMES * 2 * sizeof(int16_t);
+    AudioQueueEnqueueBuffer(g_aq, buf, 0, NULL);
+}
+
+static void aq_cb(void *ctx, AudioQueueRef q, AudioQueueBufferRef buf) {
+    (void) ctx;
+    (void) q;
+    aq_fill(buf);
+}
+
+static void teardown_audio(void) {
+    if (g_aq) {
+        AudioQueueStop(g_aq, true);
+        AudioQueueDispose(g_aq, true);
+        g_aq = NULL;
+    }
+    g_ring_rd = g_ring_wr = 0;
+}
+
+static void init_audio(int sample_rate) {
+    if (g_aq) return;
+    g_audio_rate = sample_rate > 0 ? sample_rate : 44100;
+
+    AudioStreamBasicDescription fmt;
+    memset(&fmt, 0, sizeof(fmt));
+    fmt.mSampleRate = g_audio_rate;
+    fmt.mFormatID = kAudioFormatLinearPCM;
+    fmt.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+    fmt.mChannelsPerFrame = 2;
+    fmt.mBitsPerChannel = 16;
+    fmt.mBytesPerFrame = 4;
+    fmt.mFramesPerPacket = 1;
+    fmt.mBytesPerPacket = 4;
+
+    if (AudioQueueNewOutput(&fmt, aq_cb, NULL, NULL, NULL, 0, &g_aq) != noErr) {
+        g_aq = NULL;
+        return;
+    }
+    for (int i = 0; i < AQ_NUM_BUFFERS; i++) {
+        AudioQueueBufferRef buf = NULL;
+        if (AudioQueueAllocateBuffer(g_aq, AQ_CHUNK_FRAMES * 2 * sizeof(int16_t), &buf) == noErr) {
+            aq_fill(buf);
+        }
+    }
+    AudioQueueStart(g_aq, NULL);
+}
+
+static void audio_sample_cb(int16_t l, int16_t r) {
+    int16_t frame[2] = { l, r };
+    ring_write(frame, 1);
+}
 
 static size_t audio_batch_cb(const int16_t *data, size_t frames) {
-    (void) data;
+    ring_write(data, frames);
     return frames;
 }
 
@@ -457,6 +546,9 @@ static bool startup(void) {
                av.geometry.base_width, av.geometry.base_height,
                av.geometry.max_width, av.geometry.max_height,
                av.timing.fps, av.timing.sample_rate);
+        init_audio(av.timing.sample_rate > 0 ? (int) av.timing.sample_rate : 44100);
+    } else {
+        init_audio(44100);
     }
     if (g_core.retro_set_controller_port_device) {
         g_core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
@@ -537,6 +629,7 @@ void n64_set_view_size(int width, int height) {
 
 void n64_teardown(void) {
     if (!g_core.handle) return;
+    teardown_audio();
     if (g_have_hw && g_hw.context_destroy) g_hw.context_destroy();
     if (g_loaded && g_core.retro_unload_game) g_core.retro_unload_game();
     if (g_core.retro_deinit) g_core.retro_deinit();

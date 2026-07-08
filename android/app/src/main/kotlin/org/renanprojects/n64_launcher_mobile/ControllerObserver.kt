@@ -38,11 +38,13 @@ class ControllerObserver(context: Context) :
             val device = InputDevice.getDevice(id) ?: continue
             if (device.isVirtual) continue
             val sources = device.sources
+            // Require SOURCE_GAMEPAD: real game controllers (Xbox, PS, 8BitDo,
+            // generic Bluetooth/USB pads) all report it. Reject phantom devices
+            // that only advertise SOURCE_JOYSTICK, such as the Qualcomm headset
+            // "Button Jack" present on this and many other phones.
             val isGamepad =
                 sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
-            val isJoystick =
-                sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
-            if (isGamepad || isJoystick) count++
+            if (isGamepad) count++
         }
         return count
     }

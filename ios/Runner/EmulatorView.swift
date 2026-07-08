@@ -54,6 +54,7 @@ final class EmulatorPlatformView: NSObject, FlutterPlatformView, GLKViewDelegate
             n64_on_gl_ready()
             glReady = true
         }
+        n64_set_view_size(Int32(view.drawableWidth), Int32(view.drawableHeight))
         n64_run_frame()
     }
 

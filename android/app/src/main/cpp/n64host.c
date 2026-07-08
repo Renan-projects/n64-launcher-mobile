@@ -53,6 +53,8 @@ static const char *core_var(const char *key) {
     if (!strcmp(key, "mupen64plus-rdp-plugin")) return "angrylion";
     if (!strcmp(key, "mupen64plus-rsp-plugin")) return "hle";
     if (!strcmp(key, "mupen64plus-ThreadedRenderer")) return "False";
+    if (!strcmp(key, "mupen64plus-angrylion-multithread")) return "all threads";
+    if (!strcmp(key, "mupen64plus-angrylion-sync")) return "Low";
     if (!strcmp(key, "mupen64plus-angrylion-vioverlay")) return "Filtered";
     return NULL;
 }
@@ -309,11 +311,26 @@ static void upload_sw_frame(const void *data, unsigned w, unsigned h, size_t pit
 static void draw_sw_frame(void) {
     if (!g_have_sw || !g_sw_prog || g_view_w <= 0 || g_view_h <= 0) return;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, g_view_w, g_view_h);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
+
+    glViewport(0, 0, g_view_w, g_view_h);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    const float target_ar = 4.0f / 3.0f;
+    int dw = g_view_w;
+    int dh = (int) ((float) g_view_w / target_ar);
+    if (dh > g_view_h) {
+        dh = g_view_h;
+        dw = (int) ((float) g_view_h * target_ar);
+    }
+    int dx = (g_view_w - dw) / 2;
+    int dy = (g_view_h - dh) / 2;
+    glViewport(dx, dy, dw, dh);
+
     glUseProgram(g_sw_prog);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, g_sw_tex);

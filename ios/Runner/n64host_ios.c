@@ -70,20 +70,12 @@ struct retro_variable { const char *key; const char *value; };
 
 static const char *core_var(const char *key) {
     if (!key) return NULL;
-    if (!strcmp(key, "mupen64plus-rdp-plugin")) return "gliden64";
+    if (!strcmp(key, "mupen64plus-rdp-plugin")) return "angrylion";
     if (!strcmp(key, "mupen64plus-rsp-plugin")) return "hle";
     if (!strcmp(key, "mupen64plus-ThreadedRenderer")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableFBEmulation")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableNativeResFactor")) return "1";
-    if (!strcmp(key, "mupen64plus-MultiSampling")) return "0";
-    if (!strcmp(key, "mupen64plus-EnableHWLighting")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableLODEmulation")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableCopyColorToRDRAM")) return "Off";
-    if (!strcmp(key, "mupen64plus-EnableCopyDepthToRDRAM")) return "False";
-    if (!strcmp(key, "mupen64plus-EnableCopyAuxToRDRAM")) return "False";
-    if (!strcmp(key, "mupen64plus-BilinearMode")) return "standard";
-    if (!strcmp(key, "mupen64plus-Framerate")) return "Original";
-    if (!strcmp(key, "mupen64plus-CountPerOp")) return "2";
+    if (!strcmp(key, "mupen64plus-angrylion-multithread")) return "all threads";
+    if (!strcmp(key, "mupen64plus-angrylion-sync")) return "Low";
+    if (!strcmp(key, "mupen64plus-angrylion-vioverlay")) return "Filtered";
     return NULL;
 }
 
@@ -151,12 +143,120 @@ static uintptr_t current_framebuffer(void) {
     return (uintptr_t) fbo;
 }
 
+static int g_pixel_format = 1;
+static int g_view_w = 0;
+static int g_view_h = 0;
+static GLuint g_def_fbo = 0;
+
+static GLuint g_sw_prog = 0;
+static GLuint g_sw_tex = 0;
+static GLint g_sw_utex = -1;
+static int g_sw_w = 0;
+static int g_sw_h = 0;
+static bool g_have_sw = false;
+
+static const char *SW_VS =
+    "#version 300 es\n"
+    "out vec2 v_uv;\n"
+    "void main(){\n"
+    "  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+    "  v_uv = p;\n"
+    "  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+
+static const char *SW_FS =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "in vec2 v_uv;\n"
+    "uniform sampler2D u_tex;\n"
+    "out vec4 o;\n"
+    "void main(){\n"
+    "  vec4 c = texture(u_tex, vec2(v_uv.x, 1.0 - v_uv.y));\n"
+    "  o = vec4(c.b, c.g, c.r, 1.0);\n"
+    "}\n";
+
+static GLuint compile_sh(GLenum type, const char *src) {
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    return s;
+}
+
+static void init_sw_display(void) {
+    if (g_sw_prog) return;
+    GLuint vs = compile_sh(GL_VERTEX_SHADER, SW_VS);
+    GLuint fs = compile_sh(GL_FRAGMENT_SHADER, SW_FS);
+    g_sw_prog = glCreateProgram();
+    glAttachShader(g_sw_prog, vs);
+    glAttachShader(g_sw_prog, fs);
+    glLinkProgram(g_sw_prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    g_sw_utex = glGetUniformLocation(g_sw_prog, "u_tex");
+    glGenTextures(1, &g_sw_tex);
+    glBindTexture(GL_TEXTURE_2D, g_sw_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+static void upload_sw_frame(const void *data, unsigned w, unsigned h, size_t pitch) {
+    if (!g_sw_prog) init_sw_display();
+    glBindTexture(GL_TEXTURE_2D, g_sw_tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, (g_pixel_format == 2) ? 2 : 4);
+    GLint fmt = (g_pixel_format == 2) ? GL_RGB : GL_RGBA;
+    GLenum type = (g_pixel_format == 2) ? GL_UNSIGNED_SHORT_5_6_5 : GL_UNSIGNED_BYTE;
+    int bpp = (g_pixel_format == 2) ? 2 : 4;
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint) (pitch / bpp));
+    if ((int) w != g_sw_w || (int) h != g_sw_h) {
+        glTexImage2D(GL_TEXTURE_2D, 0, fmt, w, h, 0, fmt, type, data);
+        g_sw_w = (int) w;
+        g_sw_h = (int) h;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, fmt, type, data);
+    }
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    g_have_sw = true;
+}
+
+static void draw_sw_frame(void) {
+    if (!g_have_sw || !g_sw_prog || g_view_w <= 0 || g_view_h <= 0) return;
+    glBindFramebuffer(GL_FRAMEBUFFER, g_def_fbo);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+
+    glViewport(0, 0, g_view_w, g_view_h);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    const float target_ar = 4.0f / 3.0f;
+    int dw = g_view_w;
+    int dh = (int) ((float) g_view_w / target_ar);
+    if (dh > g_view_h) {
+        dh = g_view_h;
+        dw = (int) ((float) g_view_h * target_ar);
+    }
+    int dx = (g_view_w - dw) / 2;
+    int dy = (g_view_h - dh) / 2;
+    glViewport(dx, dy, dw, dh);
+
+    glUseProgram(g_sw_prog);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g_sw_tex);
+    glUniform1i(g_sw_utex, 0);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
 static bool env_cb(unsigned cmd, void *data) {
     switch (cmd) {
         case RETRO_ENVIRONMENT_GET_CAN_DUPE:
             *(bool *) data = true;
             return true;
         case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
+            g_pixel_format = *(const int *) data;
             return true;
         case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
             *(const char **) data = g_system_dir;
@@ -192,7 +292,9 @@ static bool env_cb(unsigned cmd, void *data) {
 }
 
 static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
-    (void) data; (void) w; (void) h; (void) pitch;
+    if (!data) return;
+    if (data == RETRO_HW_FRAME_BUFFER_VALID) return;
+    upload_sw_frame(data, w, h, pitch);
 }
 
 static void audio_sample_cb(int16_t l, int16_t r) { (void) l; (void) r; }
@@ -346,7 +448,16 @@ void n64_run_frame(void) {
     if (!g_loaded || g_paused) return;
     if (g_do_load) { do_load(g_pending_load); g_do_load = false; }
     if (g_do_save) { do_save(g_pending_save); g_do_save = false; }
+    GLint bound = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
+    g_def_fbo = (GLuint) bound;
     g_core.retro_run();
+    if (g_have_sw) draw_sw_frame();
+}
+
+void n64_set_view_size(int width, int height) {
+    g_view_w = width;
+    g_view_h = height;
 }
 
 void n64_teardown(void) {

@@ -28,6 +28,14 @@ git config --global --add safe.directory '*' || true
 flutter config --no-analytics >/dev/null 2>&1 || true
 yes | flutter doctor --android-licenses >/dev/null 2>&1 || true
 flutter pub get
+for abi in arm64-v8a armeabi-v7a; do
+  dest="android/app/src/main/assets/cores/$abi"
+  mkdir -p "$dest"
+  if [ ! -f "$dest/mupen64plus_next_gles3_libretro_android.so" ]; then
+    curl -fSL -o "/tmp/core-$abi.zip" "https://buildbot.libretro.com/nightly/android/latest/$abi/mupen64plus_next_gles3_libretro_android.so.zip"
+    unzip -o -q "/tmp/core-$abi.zip" -d "$dest"
+  fi
+done
 flutter build apk --release
 '''
             archiveArtifacts artifacts: 'build/app/outputs/flutter-apk/app-release.apk', fingerprint: true

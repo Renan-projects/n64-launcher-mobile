@@ -71,9 +71,14 @@ cp -R build/ios/iphoneos/Runner.app build/ipa-work/Payload/
       when { branch 'main' }
       agent { label 'android' }
       steps {
-        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE', message: 'Release skipped (create the renan-projects-gh-token credential to enable it)') {
-          unstash 'android-apk'
-          unstash 'ios-ipa'
+        unstash 'android-apk'
+        unstash 'ios-ipa'
+        sh '''#!/usr/bin/env bash
+pip3 install --quiet "qrcode[pil]" 2>/dev/null \
+  || pip3 install --quiet --break-system-packages "qrcode[pil]" 2>/dev/null \
+  || true
+'''
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE', message: 'Android release/QR step failed (missing renan-projects-gh-token credential or qrcode module)') {
           publishAndroidArtifact([
             apkPath:      'build/app/outputs/flutter-apk/app-release.apk',
             appName:      'N64 Launcher Mobile',
@@ -81,6 +86,8 @@ cp -R build/ios/iphoneos/Runner.app build/ipa-work/Payload/
             releaseNotes: "Automated build #${env.BUILD_NUMBER} — Android APK + iOS IPA (unsigned, install with SideStore).",
             githubToken:  'renan-projects-gh-token'
           ])
+        }
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE', message: 'iOS IPA upload to the release failed') {
           withCredentials([string(credentialsId: 'renan-projects-gh-token', variable: 'GITHUB_TOKEN')]) {
             sh '''#!/usr/bin/env bash
 set -euo pipefail

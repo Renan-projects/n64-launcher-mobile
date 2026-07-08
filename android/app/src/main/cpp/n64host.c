@@ -30,6 +30,27 @@
 
 struct retro_log_callback { void (*log)(int level, const char *fmt, ...); };
 
+struct retro_variable { const char *key; const char *value; };
+
+static const char *core_var(const char *key) {
+    if (!key) return NULL;
+    if (!strcmp(key, "mupen64plus-rdp-plugin")) return "gliden64";
+    if (!strcmp(key, "mupen64plus-rsp-plugin")) return "hle";
+    if (!strcmp(key, "mupen64plus-ThreadedRenderer")) return "False";
+    if (!strcmp(key, "mupen64plus-EnableFBEmulation")) return "False";
+    if (!strcmp(key, "mupen64plus-EnableNativeResFactor")) return "1";
+    if (!strcmp(key, "mupen64plus-MultiSampling")) return "0";
+    if (!strcmp(key, "mupen64plus-EnableHWLighting")) return "False";
+    if (!strcmp(key, "mupen64plus-EnableLODEmulation")) return "False";
+    if (!strcmp(key, "mupen64plus-EnableCopyColorToRDRAM")) return "Off";
+    if (!strcmp(key, "mupen64plus-EnableCopyDepthToRDRAM")) return "False";
+    if (!strcmp(key, "mupen64plus-EnableCopyAuxToRDRAM")) return "False";
+    if (!strcmp(key, "mupen64plus-BilinearMode")) return "standard";
+    if (!strcmp(key, "mupen64plus-Framerate")) return "Original";
+    if (!strcmp(key, "mupen64plus-CountPerOp")) return "2";
+    return NULL;
+}
+
 static void core_log(int level, const char *fmt, ...) {
     (void) level;
     va_list ap;
@@ -158,6 +179,17 @@ static bool env_cb(unsigned cmd, void *data) {
             g_hw = *hw;
             g_have_hw = true;
             return true;
+        }
+        case RETRO_ENVIRONMENT_GET_VARIABLE: {
+            struct retro_variable *var = data;
+            const char *v = core_var(var->key);
+            LOGI("GET_VARIABLE %s -> %s", var->key ? var->key : "(null)", v ? v : "(default)");
+            if (v) {
+                var->value = v;
+                return true;
+            }
+            var->value = NULL;
+            return false;
         }
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
             *(bool *) data = false;

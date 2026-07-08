@@ -26,12 +26,7 @@ yes | flutter doctor --android-licenses >/dev/null 2>&1 || true
 flutter pub get
 flutter build apk --release
 '''
-            publishAndroidArtifact([
-              apkPath:      'build/app/outputs/flutter-apk/app-release.apk',
-              appName:      'N64 Launcher Mobile',
-              releaseNotes: "Build #${env.BUILD_NUMBER} (${env.BRANCH_NAME})",
-              githubToken:  'renan-projects-gh-token'
-            ])
+            archiveArtifacts artifacts: 'build/app/outputs/flutter-apk/app-release.apk', fingerprint: true
           }
         }
         stage('iOS') {

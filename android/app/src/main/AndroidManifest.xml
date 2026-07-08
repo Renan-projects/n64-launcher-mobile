@@ -2,6 +2,7 @@
     <application
         android:label="n64_launcher_mobile"
         android:name="${applicationName}"
+        android:allowNativeHeapPointerTagging="false"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

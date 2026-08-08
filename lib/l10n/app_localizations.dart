@@ -484,7 +484,7 @@ abstract class L10n {
   /// No description provided for @helpSavesBody.
   ///
   /// In en, this message translates to:
-  /// **'In-game saves and save states are stored on the device. Use the save-slot menu to keep several points per game.'**
+  /// **'In-game saves are written to a .srm file named after the ROM, next to the ten save-state slots. Settings shows the folder, opens it in a file manager and imports an existing .srm.'**
   String get helpSavesBody;
 
   /// No description provided for @helpRomsTitle.

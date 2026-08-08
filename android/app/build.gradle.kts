@@ -14,14 +14,15 @@ android {
     }
 
     lint {
-        disable += "ExpiredTargetSdkVersion"
         abortOnError = false
     }
 
     defaultConfig {
         applicationId = "org.renanprojects.n64_launcher_mobile"
         minSdk = flutter.minSdkVersion
-        targetSdk = 28
+        // Recent Android refuses to install an app that targets an old API.
+        // Scoped storage is handled by asking for all-files access instead.
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         ndk {

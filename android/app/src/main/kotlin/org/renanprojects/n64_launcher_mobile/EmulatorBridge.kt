@@ -215,6 +215,24 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
     /** Ask for whatever access would let us use the public folder. */
     private fun requestStorageAccess(): String {
         val activity = context as? Activity ?: return "unsupported"
+
+        // From Android 11 the runtime permission no longer grants writes
+        // outside the app folders: all-files access is the only way in.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) return "granted"
+            val settings = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:${context.packageName}"),
+            )
+            if (launch(settings)) return "settings"
+            // Some builds only expose the whole-list screen.
+            return if (launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))) {
+                "settings"
+            } else {
+                "unsupported"
+            }
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             activity.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
             PackageManager.PERMISSION_GRANTED
@@ -227,14 +245,6 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
                 STORAGE_REQUEST_CODE,
             )
             return "requested"
-        }
-        // Granted but still unusable: only all-files access can unlock it.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                Uri.parse("package:${context.packageName}"),
-            )
-            return if (launch(intent)) "settings" else "unsupported"
         }
         return "granted"
     }

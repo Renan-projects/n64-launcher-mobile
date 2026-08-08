@@ -65,11 +65,8 @@ jobs:
           mv build/app/outputs/flutter-apk/app-release.apk \
              "build/N64Launcher-${{ steps.version.outputs.value }}.apk"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: N64Launcher-apk
-          path: build/N64Launcher-*.apk
-
+      # The APK ships as a release asset only: build artifacts count against a
+      # storage quota that release assets do not.
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

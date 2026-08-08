@@ -32,7 +32,9 @@ jobs:
 
       - name: Read version from pubspec
         id: version
-        run: echo "value=$(grep -m1 '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(grep -m1 '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
+          echo "value=$version" >> "$GITHUB_OUTPUT"
 
       - name: Fetch libretro cores
         run: |

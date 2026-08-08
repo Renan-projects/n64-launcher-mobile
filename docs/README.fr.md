@@ -28,6 +28,29 @@ iOS.
 - **Traduite.** Anglais et français inclus ; d'autres langues peuvent être
   ajoutées via les fichiers ARB.
 
+## Sauvegardes
+
+Deux choses différentes sont enregistrées, côte à côte :
+
+| Quoi | Fichier | Écrit par |
+| --- | --- | --- |
+| Sauvegarde en jeu (SRAM, EEPROM, Flash, Controller Pak) | `saves/<nom de la rom>.srm` | l'app, depuis la save RAM du cœur |
+| Sauvegarde d'état (10 emplacements) | `states/<nom de la rom>.state0` … `.state9` | `retro_serialize` |
+
+Le format et le nommage du `.srm` sont ceux de mupen64plus-next dans RetroArch :
+les fichiers passent de l'un à l'autre. L'écriture a lieu quand le contenu change
+(au plus toutes les 5 s), à la pause et en quittant le jeu.
+
+Sur Android les dossiers sont dans `/sdcard/N64Launcher/`, accessibles depuis
+n'importe quel gestionnaire de fichiers ; l'app se replie sur
+`Android/data/<paquet>/files` puis sur le stockage interne si l'accès est
+refusé, et déplace les sauvegardes existantes dès qu'un meilleur dossier est
+disponible. Sur iOS elles sont dans le dossier `Documents` de l'app, exposé à
+l'application Fichiers.
+
+**Réglages → Sauvegardes** affiche le dossier exact, l'ouvre dans le
+gestionnaire de fichiers et importe un `.srm` existant.
+
 ## Architecture
 
 ```

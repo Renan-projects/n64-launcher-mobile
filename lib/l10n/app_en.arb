@@ -47,6 +47,23 @@
   "settingsVideo": "Video",
   "settingsIntegerScaling": "Integer scaling",
   "settingsAbout": "About",
+  "settingsSaves": "Saves",
+  "savesFolder": "Saves folder",
+  "savesOpenFolder": "Open the folder",
+  "savesCopyPath": "Copy path",
+  "savesPathCopied": "Path copied",
+  "savesNoFileManager": "No file manager could open the folder. Copy the path and browse to it.",
+  "savesImport": "Import a save (.srm)",
+  "savesImportSubtitle": "The file must carry the exact name of the ROM.",
+  "savesImported": "{name} imported",
+  "@savesImported": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "savesImportWrongType": "Pick a .srm file.",
+  "savesImportFailed": "The save could not be copied.",
+  "savesGrantAccess": "Allow storage access",
+  "savesGrantAccessSubtitle": "Needed to keep saves in a folder a file manager can reach.",
+  "savesUnavailable": "The saves folder is not available on this platform.",
   "controllerConnected": "Controller connected",
   "controllerDisconnected": "Controller disconnected",
   "pause": "Pause",
@@ -68,7 +85,7 @@
   "helpControlsTitle": "Controls",
   "helpControlsBody": "Use the on-screen buttons to play. Connect a Bluetooth or USB controller and the touch controls disappear automatically.",
   "helpSavesTitle": "Saves",
-  "helpSavesBody": "In-game saves and save states are stored on the device. Use the save-slot menu to keep several points per game.",
+  "helpSavesBody": "In-game saves are written to a .srm file named after the ROM, next to the ten save-state slots. Settings shows the folder, opens it in a file manager and imports an existing .srm.",
   "helpRomsTitle": "Games",
   "helpRomsBody": "Add your own .z64, .n64, .v64 or .zip ROM files. This app does not include any games."
 }

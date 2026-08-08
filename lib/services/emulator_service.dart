@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import '../models/pad_button.dart';
 import '../models/save_slot.dart';
+import '../models/saves_info.dart';
 
 enum EmulatorStatus { idle, loading, running, paused, missingCore, error }
 
@@ -61,6 +62,44 @@ class EmulatorService {
 
   Future<void> deleteSaveSlot(String romPath, int slot) =>
       _channel.invokeMethod('deleteSaveSlot', {'rom': romPath, 'slot': slot});
+
+  /// Folders the emulator reads saves from, resolved by the platform.
+  Future<SavesInfo> savesInfo() async {
+    try {
+      final raw = await _channel.invokeMapMethod<String, dynamic>('savesInfo');
+      if (raw == null) return SavesInfo.unknown;
+      return SavesInfo.fromJson(raw);
+    } on PlatformException {
+      return SavesInfo.unknown;
+    } on MissingPluginException {
+      return SavesInfo.unknown;
+    }
+  }
+
+  /// Shows the saves folder in the device file manager.
+  Future<OpenFolderResult> openSavesFolder() async {
+    try {
+      final result = await _channel.invokeMethod<String>('openSavesFolder');
+      return result == 'opened'
+          ? OpenFolderResult.opened
+          : OpenFolderResult.noFileManager;
+    } on PlatformException {
+      return OpenFolderResult.unsupported;
+    } on MissingPluginException {
+      return OpenFolderResult.unsupported;
+    }
+  }
+
+  /// Asks for the storage access needed to keep saves in a shared folder.
+  Future<void> requestSavesAccess() async {
+    try {
+      await _channel.invokeMethod('requestSavesAccess');
+    } on PlatformException {
+      // Nothing to request on this platform.
+    } on MissingPluginException {
+      // Nothing to request on this platform.
+    }
+  }
 
   EmulatorStatus _statusFrom(String? value) {
     switch (value) {

@@ -124,6 +124,53 @@ class L10nEn extends L10n {
   String get settingsAbout => 'About';
 
   @override
+  String get settingsSaves => 'Saves';
+
+  @override
+  String get savesFolder => 'Saves folder';
+
+  @override
+  String get savesOpenFolder => 'Open the folder';
+
+  @override
+  String get savesCopyPath => 'Copy path';
+
+  @override
+  String get savesPathCopied => 'Path copied';
+
+  @override
+  String get savesNoFileManager =>
+      'No file manager could open the folder. Copy the path and browse to it.';
+
+  @override
+  String get savesImport => 'Import a save (.srm)';
+
+  @override
+  String get savesImportSubtitle => 'The file must carry the exact name of the ROM.';
+
+  @override
+  String savesImported(String name) {
+    return '$name imported';
+  }
+
+  @override
+  String get savesImportWrongType => 'Pick a .srm file.';
+
+  @override
+  String get savesImportFailed => 'The save could not be copied.';
+
+  @override
+  String get savesGrantAccess => 'Allow storage access';
+
+  @override
+  String get savesGrantAccessSubtitle =>
+      'Needed to keep saves in a folder a file manager can reach.';
+
+  @override
+  String get savesUnavailable =>
+      'The saves folder is not available on this platform.';
+
+  @override
   String get controllerConnected => 'Controller connected';
 
   @override
@@ -176,7 +223,7 @@ class L10nEn extends L10n {
 
   @override
   String get helpSavesBody =>
-      'In-game saves and save states are stored on the device. Use the save-slot menu to keep several points per game.';
+      'In-game saves are written to a .srm file named after the ROM, next to the ten save-state slots. Settings shows the folder, opens it in a file manager and imports an existing .srm.';
 
   @override
   String get helpRomsTitle => 'Games';

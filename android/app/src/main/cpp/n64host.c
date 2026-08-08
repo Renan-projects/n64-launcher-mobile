@@ -185,6 +185,8 @@ struct core {
     bool (*retro_unserialize)(const void *, size_t);
     void (*retro_get_system_av_info)(struct retro_system_av_info *);
     void (*retro_set_controller_port_device)(unsigned, unsigned);
+    void *(*retro_get_memory_data)(unsigned);
+    size_t (*retro_get_memory_size)(unsigned);
 };
 
 static struct core g_core;
@@ -209,6 +211,15 @@ static char g_pending_save[1024];
 static char g_pending_load[1024];
 static volatile bool g_do_save = false;
 static volatile bool g_do_load = false;
+
+// In-game saves (SRAM/EEPROM/Flash/Controller Pak). The core keeps them in a
+// memory block; persisting it to <save dir>/<rom name>.srm is the frontend's
+// job, exactly like RetroArch does.
+static char g_srm_path[1024];
+static void *g_srm_shadow = NULL;
+static size_t g_srm_size = 0;
+static int g_srm_ticks = 0;
+static volatile bool g_srm_flush = false;
 
 static void *g_rom_data = NULL;
 static size_t g_rom_size = 0;
@@ -721,8 +732,81 @@ static bool load_core(const char *path) {
     g_core.retro_unserialize = resolve(g_core.handle, "retro_unserialize");
     g_core.retro_get_system_av_info = resolve(g_core.handle, "retro_get_system_av_info");
     g_core.retro_set_controller_port_device = resolve(g_core.handle, "retro_set_controller_port_device");
+    g_core.retro_get_memory_data = resolve(g_core.handle, "retro_get_memory_data");
+    g_core.retro_get_memory_size = resolve(g_core.handle, "retro_get_memory_size");
     if (g_core.retro_run) patch_core_allocator((void *) g_core.retro_run);
     return g_core.retro_run && g_core.retro_load_game && g_core.retro_init;
+}
+
+#define RETRO_MEMORY_SAVE_RAM 0
+
+// Save file for the current ROM: <save dir>/<rom name without extension>.srm,
+// the same naming RetroArch uses, so save files can be moved between the two.
+static void srm_build_path(void) {
+    g_srm_path[0] = '\0';
+    if (!g_save_dir[0] || !g_rom_path[0]) return;
+    const char *name = strrchr(g_rom_path, '/');
+    name = name ? name + 1 : g_rom_path;
+    char base[512];
+    snprintf(base, sizeof(base), "%s", name);
+    char *dot = strrchr(base, '.');
+    if (dot && dot != base) *dot = '\0';
+    snprintf(g_srm_path, sizeof(g_srm_path), "%s/%s.srm", g_save_dir, base);
+}
+
+static void srm_reset(void) {
+    free(g_srm_shadow);
+    g_srm_shadow = NULL;
+    g_srm_size = 0;
+    g_srm_ticks = 0;
+    g_srm_flush = false;
+    g_srm_path[0] = '\0';
+}
+
+static void srm_load(void) {
+    srm_reset();
+    if (!g_core.retro_get_memory_data || !g_core.retro_get_memory_size) {
+        LOGE("core exposes no save RAM, in-game saves will not persist");
+        return;
+    }
+    void *mem = g_core.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    size_t size = g_core.retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    if (!mem || size == 0) {
+        LOGE("save RAM is empty (%p, %zu bytes)", mem, size);
+        return;
+    }
+    g_srm_size = size;
+    g_srm_shadow = malloc(size);
+    srm_build_path();
+
+    FILE *f = fopen(g_srm_path, "rb");
+    if (f) {
+        // A shorter file (or a longer one) still loads: copy what fits.
+        size_t got = fread(mem, 1, size, f);
+        fclose(f);
+        LOGI("save RAM: read %zu of %zu bytes from %s", got, size, g_srm_path);
+    } else {
+        LOGI("save RAM: no file at %s, starting fresh", g_srm_path);
+    }
+    if (g_srm_shadow) memcpy(g_srm_shadow, mem, size);
+}
+
+static void srm_save(void) {
+    if (!g_loaded || g_srm_size == 0 || !g_srm_path[0]) return;
+    if (!g_core.retro_get_memory_data) return;
+    void *mem = g_core.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    if (!mem) return;
+    if (g_srm_shadow && memcmp(g_srm_shadow, mem, g_srm_size) == 0) return;
+
+    FILE *f = fopen(g_srm_path, "wb");
+    if (!f) {
+        LOGE("save RAM: cannot write %s", g_srm_path);
+        return;
+    }
+    size_t written = fwrite(mem, 1, g_srm_size, f);
+    fclose(f);
+    if (g_srm_shadow) memcpy(g_srm_shadow, mem, g_srm_size);
+    LOGI("save RAM: wrote %zu bytes to %s", written, g_srm_path);
 }
 
 static bool startup(void) {
@@ -762,6 +846,7 @@ static bool startup(void) {
         LOGE("retro_load_game failed");
         return false;
     }
+    srm_load();
     int fb_w = 640, fb_h = 480;
     if (g_core.retro_get_system_av_info) {
         struct retro_system_av_info av;
@@ -787,6 +872,8 @@ static bool startup(void) {
 
 static void teardown(void) {
     if (!g_core.handle) return;
+    srm_save();
+    srm_reset();
     teardown_audio();
     if (g_have_hw && g_hw.context_destroy) g_hw.context_destroy();
     destroy_fbo();
@@ -890,7 +977,12 @@ FN(nativeRunFrame)(JNIEnv *env, jobject thiz) {
         if (!g_loaded) teardown();
         return;
     }
-    if (!g_loaded || g_paused) return;
+    if (!g_loaded) return;
+    if (g_srm_flush) {
+        g_srm_flush = false;
+        srm_save();
+    }
+    if (g_paused) return;
 
     if (g_do_load) {
         do_load(g_pending_load);
@@ -902,6 +994,12 @@ FN(nativeRunFrame)(JNIEnv *env, jobject thiz) {
     }
 
     g_core.retro_run();
+
+    // Flush the in-game save every ~5 s, but only when it actually changed.
+    if (++g_srm_ticks >= 300) {
+        g_srm_ticks = 0;
+        srm_save();
+    }
 
     if (g_have_sw) {
         draw_sw_frame();
@@ -924,11 +1022,13 @@ FN(nativeOnSurfaceDestroyed)(JNIEnv *env, jobject thiz) {
 JNIEXPORT void JNICALL
 FN(nativeStop)(JNIEnv *env, jobject thiz) {
     g_want_load = false;
+    g_srm_flush = true;
     g_paused = true;
 }
 
 JNIEXPORT void JNICALL
 FN(nativePause)(JNIEnv *env, jobject thiz, jboolean paused) {
+    if (paused == JNI_TRUE) g_srm_flush = true;
     g_paused = paused == JNI_TRUE;
 }
 

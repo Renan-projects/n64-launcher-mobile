@@ -26,6 +26,28 @@ its own touch controls on top of the game and run on iOS.
 - **Save states.** Ten slots per game, saved on the device.
 - **Localised.** English and French in the box; more can be added from ARB files.
 
+## Saves
+
+Two different things are saved, side by side:
+
+| What | File | Written by |
+| --- | --- | --- |
+| In-game save (SRAM, EEPROM, Flash, Controller Pak) | `saves/<rom name>.srm` | the app, from the core's save RAM |
+| Save state (10 slots) | `states/<rom name>.state0` … `.state9` | `retro_serialize` |
+
+The `.srm` layout and naming match RetroArch's mupen64plus-next, so save files
+can be moved between the two. It is written when it changes (every 5 s at most),
+when the game is paused and when it is closed.
+
+On Android the folders live in `/sdcard/N64Launcher/`, reachable from any file
+manager; the app falls back to `Android/data/<package>/files` and then to
+internal storage if storage access is denied, and moves existing saves along
+when a better folder becomes available. On iOS they are in the app's `Documents`
+folder, exposed to the Files app.
+
+**Settings → Saves** shows the exact folder, opens it in the file manager and
+imports an existing `.srm`.
+
 ## Architecture
 
 ```

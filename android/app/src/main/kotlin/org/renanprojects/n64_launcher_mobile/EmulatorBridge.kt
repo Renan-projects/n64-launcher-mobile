@@ -1,7 +1,15 @@
 package org.renanprojects.n64_launcher_mobile
 
+import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.DocumentsContract
+import android.provider.Settings
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
@@ -11,7 +19,11 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
     private var surface: EmulatorSurfaceView? = null
     private var currentRom: String? = null
 
+    /** Where saves, save states and the system folder live. See [resolveRoot]. */
+    private var storageRoot: File = context.filesDir
+
     init {
+        syncStorage()
         installBundledCore()
     }
 
@@ -76,6 +88,22 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
                 slotFile(rom, slot)?.delete()
                 result.success(null)
             }
+            "savesInfo" -> {
+                syncStorage()
+                result.success(
+                    mapOf(
+                        "savesDir" to saveDir().absolutePath,
+                        "statesDir" to statesDir().absolutePath,
+                        "isShared" to isShared(),
+                        "canOpenFolder" to true,
+                    ),
+                )
+            }
+            "openSavesFolder" -> {
+                syncStorage()
+                result.success(if (openFolder(saveDir())) "opened" else "noFileManager")
+            }
+            "requestSavesAccess" -> result.success(requestStorageAccess())
             else -> result.notImplemented()
         }
     }
@@ -100,7 +128,12 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
         result.success("running")
     }
 
-    private fun coresDir(): File = dir("cores")
+    // The core is dlopen'd, so it stays in internal storage whatever happens.
+    private fun coresDir(): File {
+        val dir = File(context.filesDir, "cores")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
 
     private fun statesDir(): File = dir("states")
 
@@ -109,9 +142,145 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
     private fun saveDir(): File = dir("saves")
 
     private fun dir(name: String): File {
-        val dir = File(context.filesDir, name)
+        val dir = File(storageRoot, name)
         if (!dir.exists()) dir.mkdirs()
         return dir
+    }
+
+    /** True when saves sit somewhere the user can reach with a file manager. */
+    private fun isShared(): Boolean =
+        storageRoot.absolutePath.startsWith(publicRoot().absolutePath)
+
+    private fun publicRoot(): File =
+        File(Environment.getExternalStorageDirectory(), PUBLIC_FOLDER)
+
+    /**
+     * Best folder we can actually write to, most reachable first:
+     * /sdcard/N64Launcher (any file manager), Android/data/<pkg>/files (USB),
+     * then internal storage as a last resort.
+     */
+    private fun resolveRoot(): File {
+        val candidates = listOfNotNull(
+            publicRoot(),
+            context.getExternalFilesDir(null),
+            context.filesDir,
+        )
+        return candidates.firstOrNull { writable(it) } ?: context.filesDir
+    }
+
+    private fun writable(dir: File): Boolean = try {
+        if (!dir.exists()) dir.mkdirs()
+        val probe = File(dir, ".write-probe")
+        probe.writeText("ok")
+        probe.delete()
+        true
+    } catch (_: Throwable) {
+        false
+    }
+
+    /**
+     * Pick the storage root and move anything left behind by an older install
+     * (or by a run without storage permission) into it.
+     */
+    private fun syncStorage() {
+        val target = resolveRoot()
+        val previous = listOfNotNull(context.filesDir, context.getExternalFilesDir(null))
+            .filter { it.absolutePath != target.absolutePath }
+        for (old in previous) {
+            for (name in MOVABLE_DIRS) {
+                moveContents(File(old, name), File(target, name))
+            }
+        }
+        storageRoot = target
+    }
+
+    private fun moveContents(from: File, to: File) {
+        if (!from.isDirectory) return
+        val files = from.listFiles() ?: return
+        if (files.isEmpty()) return
+        if (!to.exists() && !to.mkdirs()) return
+        for (file in files) {
+            if (!file.isFile) continue
+            val target = File(to, file.name)
+            // Never clobber a save that already exists in the new location.
+            if (target.exists()) continue
+            try {
+                file.copyTo(target)
+                file.delete()
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    /** Ask for whatever access would let us use the public folder. */
+    private fun requestStorageAccess(): String {
+        val activity = context as? Activity ?: return "unsupported"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            activity.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            activity.requestPermissions(
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                ),
+                STORAGE_REQUEST_CODE,
+            )
+            return "requested"
+        }
+        // Granted but still unusable: only all-files access can unlock it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:${context.packageName}"),
+            )
+            return if (launch(intent)) "settings" else "unsupported"
+        }
+        return "granted"
+    }
+
+    /**
+     * Open a folder in whatever browses files on this device. Falls back to the
+     * system document picker, which every Android since 8 has.
+     */
+    private fun openFolder(dir: File): Boolean {
+        val relative = relativeToPrimary(dir)
+        if (relative != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val documentId = "primary:$relative"
+            val document = DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE_PROVIDER, documentId)
+            val view = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(document, DOCUMENT_DIR_MIME)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (launch(view)) return true
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val tree = DocumentsContract.buildTreeDocumentUri(EXTERNAL_STORAGE_PROVIDER, documentId)
+                val picker = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                    .putExtra(DocumentsContract.EXTRA_INITIAL_URI, tree)
+                if (launch(picker)) return true
+            }
+        }
+        return false
+    }
+
+    /** "N64Launcher/saves" for a path under /sdcard, null for anything else. */
+    private fun relativeToPrimary(dir: File): String? {
+        val root = Environment.getExternalStorageDirectory().absolutePath
+        val path = dir.absolutePath
+        if (!path.startsWith("$root/")) return null
+        return path.removePrefix("$root/")
+    }
+
+    private fun launch(intent: Intent): Boolean = try {
+        val activity = context as? Activity
+        if (activity != null) {
+            activity.startActivity(intent)
+        } else {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        true
+    } catch (_: Throwable) {
+        false
     }
 
     private fun coreFile(): File? =
@@ -167,5 +336,18 @@ class EmulatorBridge(private val context: Context) : MethodChannel.MethodCallHan
     fun release() {
         if (NativeLib.available) NativeLib.nativeStop()
         detachSurface()
+    }
+
+    /** Called after the storage permission dialog so the folder is re-picked. */
+    fun onStoragePermissionResult() {
+        syncStorage()
+    }
+
+    companion object {
+        const val STORAGE_REQUEST_CODE = 8064
+        private const val PUBLIC_FOLDER = "N64Launcher"
+        private const val EXTERNAL_STORAGE_PROVIDER = "com.android.externalstorage.documents"
+        private const val DOCUMENT_DIR_MIME = "vnd.android.document/directory"
+        private val MOVABLE_DIRS = listOf("saves", "states", "system")
     }
 }

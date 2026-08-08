@@ -36,9 +36,26 @@ android {
         }
     }
 
+    // Release key comes from the environment (CI secrets or a local keystore).
+    // Without it the build falls back to the debug key so it still runs.
+    signingConfigs {
+        val keystore = System.getenv("SIGNING_KEYSTORE_PATH")
+        if (!keystore.isNullOrBlank() && file(keystore).exists()) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
         }
     }
 }

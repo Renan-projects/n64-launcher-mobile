@@ -107,6 +107,17 @@ class MainActivity : FlutterActivity() {
         return super.dispatchGenericMotionEvent(event)
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == EmulatorBridge.STORAGE_REQUEST_CODE) {
+            emulator.onStoragePermissionResult()
+        }
+    }
+
     override fun onDestroy() {
         emulator.release()
         controllers.release()

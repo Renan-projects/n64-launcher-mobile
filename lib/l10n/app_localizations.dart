@@ -307,6 +307,90 @@ abstract class L10n {
   /// **'About'**
   String get settingsAbout;
 
+  /// No description provided for @settingsSaves.
+  ///
+  /// In en, this message translates to:
+  /// **'Saves'**
+  String get settingsSaves;
+
+  /// No description provided for @savesFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Saves folder'**
+  String get savesFolder;
+
+  /// No description provided for @savesOpenFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Open the folder'**
+  String get savesOpenFolder;
+
+  /// No description provided for @savesCopyPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy path'**
+  String get savesCopyPath;
+
+  /// No description provided for @savesPathCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Path copied'**
+  String get savesPathCopied;
+
+  /// No description provided for @savesNoFileManager.
+  ///
+  /// In en, this message translates to:
+  /// **'No file manager could open the folder. Copy the path and browse to it.'**
+  String get savesNoFileManager;
+
+  /// No description provided for @savesImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import a save (.srm)'**
+  String get savesImport;
+
+  /// No description provided for @savesImportSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The file must carry the exact name of the ROM.'**
+  String get savesImportSubtitle;
+
+  /// No description provided for @savesImported.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} imported'**
+  String savesImported(String name);
+
+  /// No description provided for @savesImportWrongType.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a .srm file.'**
+  String get savesImportWrongType;
+
+  /// No description provided for @savesImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The save could not be copied.'**
+  String get savesImportFailed;
+
+  /// No description provided for @savesGrantAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow storage access'**
+  String get savesGrantAccess;
+
+  /// No description provided for @savesGrantAccessSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Needed to keep saves in a folder a file manager can reach.'**
+  String get savesGrantAccessSubtitle;
+
+  /// No description provided for @savesUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The saves folder is not available on this platform.'**
+  String get savesUnavailable;
+
   /// No description provided for @controllerConnected.
   ///
   /// In en, this message translates to:

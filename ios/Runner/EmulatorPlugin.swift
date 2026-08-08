@@ -96,9 +96,34 @@ final class EmulatorHost {
         case "saveSlots":
             let rom = (call.arguments as? [String: Any])?["rom"] as? String
             result(listSlots(rom))
+        case "savesInfo":
+            // The Documents folder is exposed to the Files app through
+            // UIFileSharingEnabled, so it is always browsable.
+            result([
+                "savesDir": saveDir().path,
+                "statesDir": statesDir().path,
+                "isShared": true,
+                "canOpenFolder": UIApplication.shared.canOpenURL(filesAppURL()),
+            ])
+        case "openSavesFolder":
+            let url = filesAppURL()
+            if UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+                result("opened")
+            } else {
+                result("noFileManager")
+            }
+        case "requestSavesAccess":
+            result("granted")
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    /// Deep link that opens the Files app on the saves folder.
+    private func filesAppURL() -> URL {
+        let path = saveDir().path
+        return URL(string: "shareddocuments://\(path)") ?? URL(string: "shareddocuments://")!
     }
 
     private func documentsDir() -> URL {

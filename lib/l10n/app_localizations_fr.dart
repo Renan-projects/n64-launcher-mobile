@@ -124,6 +124,54 @@ class L10nFr extends L10n {
   String get settingsAbout => 'À propos';
 
   @override
+  String get settingsSaves => 'Sauvegardes';
+
+  @override
+  String get savesFolder => 'Dossier des sauvegardes';
+
+  @override
+  String get savesOpenFolder => 'Ouvrir le dossier';
+
+  @override
+  String get savesCopyPath => 'Copier le chemin';
+
+  @override
+  String get savesPathCopied => 'Chemin copié';
+
+  @override
+  String get savesNoFileManager =>
+      'Aucun gestionnaire de fichiers n\'a pu ouvrir le dossier. Copie le chemin et va-y à la main.';
+
+  @override
+  String get savesImport => 'Importer une sauvegarde (.srm)';
+
+  @override
+  String get savesImportSubtitle =>
+      'Le fichier doit porter exactement le nom de la ROM.';
+
+  @override
+  String savesImported(String name) {
+    return '$name importé';
+  }
+
+  @override
+  String get savesImportWrongType => 'Choisis un fichier .srm.';
+
+  @override
+  String get savesImportFailed => 'La sauvegarde n\'a pas pu être copiée.';
+
+  @override
+  String get savesGrantAccess => 'Autoriser l\'accès au stockage';
+
+  @override
+  String get savesGrantAccessSubtitle =>
+      'Nécessaire pour ranger les sauvegardes dans un dossier accessible depuis un gestionnaire de fichiers.';
+
+  @override
+  String get savesUnavailable =>
+      'Le dossier des sauvegardes n\'est pas disponible sur cette plateforme.';
+
+  @override
   String get controllerConnected => 'Manette connectée';
 
   @override
@@ -176,7 +224,7 @@ class L10nFr extends L10n {
 
   @override
   String get helpSavesBody =>
-      'Les sauvegardes en jeu et les sauvegardes d\'état sont stockées sur l\'appareil. Utilise le menu des emplacements pour garder plusieurs points par jeu.';
+      'Les sauvegardes en jeu sont écrites dans un fichier .srm portant le nom de la ROM, à côté des dix emplacements de sauvegarde d\'état. Les réglages affichent le dossier, l\'ouvrent dans un gestionnaire de fichiers et importent un .srm existant.';
 
   @override
   String get helpRomsTitle => 'Jeux';
